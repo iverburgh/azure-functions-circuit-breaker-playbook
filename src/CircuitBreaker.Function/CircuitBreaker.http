@@ -1,0 +1,73 @@
+# Explore the breaker API against a local Function (func start, Security__Mode=Development).
+# Run the requests top to bottom; watch the circuit in the management UI at the same time.
+@baseUrl = http://localhost:7071/api
+
+### Who am I? In Development mode: a fixed user with every role.
+GET {{baseUrl}}/me
+
+### Register a circuit (what the client library does on start-up)
+PUT {{baseUrl}}/circuits/demo-api
+Content-Type: application/json
+
+{
+  "key": "demo-api",
+  "displayName": "Demo API",
+  "failureThreshold": 3,
+  "failureWindow": "00:01:00",
+  "recoveryTimeout": "00:00:15",
+  "maxRecoveryTimeout": "00:02:00",
+  "halfOpenMaxProbes": 1,
+  "halfOpenSuccessThreshold": 1
+}
+
+### Read it
+GET {{baseUrl}}/circuits/demo-api
+
+### Report three server errors: the circuit opens
+POST {{baseUrl}}/circuits/demo-api/outcomes
+Content-Type: application/json
+
+{
+  "failures": [{ "category": "ServerError", "count": 3 }],
+  "lastFailure": { "category": "ServerError", "message": "503 Service Unavailable", "at": "2026-01-01T00:00:00Z" }
+}
+
+### Functional errors are recorded but never open a circuit
+POST {{baseUrl}}/circuits/demo-api/outcomes
+Content-Type: application/json
+
+{ "failures": [{ "category": "Functional", "count": 50 }] }
+
+### Ask for a probe: refused while open, granted once half-open (wait 15 seconds)
+# @name probe
+POST {{baseUrl}}/circuits/demo-api/probes
+Content-Type: application/json
+
+{ "source": "http-file" }
+
+### Report the probe's result: one success closes this circuit
+POST {{baseUrl}}/circuits/demo-api/outcomes
+Content-Type: application/json
+
+{ "probeResults": [{ "probeId": "{{probe.response.body.$.probeId}}", "succeeded": true }] }
+
+### Isolate it (operator action; a reason is required and recorded)
+POST {{baseUrl}}/circuits/demo-api/actions/isolate
+Content-Type: application/json
+
+{ "reason": "Trying out the API" }
+
+### Isolating again is refused with 409 and an explanation
+POST {{baseUrl}}/circuits/demo-api/actions/isolate
+Content-Type: application/json
+
+{ "reason": "Again" }
+
+### Reset it
+POST {{baseUrl}}/circuits/demo-api/actions/reset
+Content-Type: application/json
+
+{ "reason": "Done trying" }
+
+### List all circuits
+GET {{baseUrl}}/circuits

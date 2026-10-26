@@ -1,0 +1,13 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/CircuitBreaker.Client/CircuitBreaker.Client.csproj" />
+    <Project Path="src/CircuitBreaker.Contracts/CircuitBreaker.Contracts.csproj" />
+    <Project Path="src/CircuitBreaker.Core/CircuitBreaker.Core.csproj" />
+    <Project Path="src/CircuitBreaker.Function/CircuitBreaker.Function.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/CircuitBreaker.Client.Tests/CircuitBreaker.Client.Tests.csproj" />
+    <Project Path="tests/CircuitBreaker.Core.Tests/CircuitBreaker.Core.Tests.csproj" />
+    <Project Path="tests/CircuitBreaker.Function.Tests/CircuitBreaker.Function.Tests.csproj" />
+  </Folder>
+</Solution>

@@ -1,0 +1,5 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\CircuitBreaker.Core\CircuitBreaker.Core.csproj" />
+  </ItemGroup>
+</Project>

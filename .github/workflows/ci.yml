@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dotnet:
+    name: .NET build and test
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+
+      - name: Build
+        run: dotnet build CircuitBreaker.slnx --configuration Release
+
+      - name: Test
+        run: dotnet test CircuitBreaker.slnx --configuration Release --no-build
+
+  ui:
+    name: Management UI
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ui
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+
+  infrastructure:
+    name: Bicep
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Build template and parameters
+        run: |
+          az bicep build --file infra/main.bicep --stdout > /dev/null
+          az bicep build-params --file infra/main.bicepparam --stdout > /dev/null
+
+  leak-check:
+    name: No internal references
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Scan for organisation-specific references
+        shell: pwsh
+        run: ./tools/Test-NoInternalReferences.ps1
+        env:
+          # Names that must never be published live in a secret, not in the repository.
+          FORBIDDEN_TERMS: ${{ secrets.FORBIDDEN_TERMS }}
+
+  links:
+    name: Documentation links
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Check relative links and anchors
+        shell: pwsh
+        run: ./tools/Test-DocumentationLinks.ps1

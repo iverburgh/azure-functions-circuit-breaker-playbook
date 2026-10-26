@@ -1,0 +1,14 @@
+bin/
+obj/
+TestResults/
+*.user
+.vs/
+node_modules/
+dist/
+# Storage emulator data from local runs.
+.azurite/
+# Local Function settings can hold secrets; the example file is the one to commit.
+local.settings.json
+# Organisation-specific terms for the leak check. Never commit this file: it would publish exactly
+# the names it keeps out.
+tools/forbidden-terms.local.txt

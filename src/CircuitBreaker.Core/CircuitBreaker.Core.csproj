@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="..\CircuitBreaker.Contracts\CircuitBreaker.Contracts.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="CircuitBreaker.Core.Tests" />
+  </ItemGroup>
+</Project>

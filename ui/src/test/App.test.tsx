@@ -13,6 +13,8 @@ function snapshot(key: string, state: CircuitState, extra: Partial<CircuitSnapsh
     HalfOpen: ["Isolate", "Disable", "Reset", "Delete"],
     Isolated: ["Disable", "Reset", "Delete"],
     Disabled: ["Isolate", "Reset", "Delete"],
+    OpenedByAlert: ["Isolate", "Disable", "Delete"],
+    OpenedAfterAlert: ["Isolate", "Disable", "Reset", "Delete"],
   };
   return {
     key,
@@ -54,6 +56,7 @@ function fakeApi(circuits: CircuitSnapshot[], roles: string[] = [OperatorRole], 
     me: vi.fn().mockResolvedValue({ name: "alice", roles }),
     list: vi.fn().mockResolvedValue(circuits),
     act: vi.fn().mockResolvedValue(result ?? { accepted: true, message: "Circuit changed from Open to Closed." }),
+    checkAlerts: vi.fn<CircuitApi["checkAlerts"]>().mockResolvedValue(null),
   } satisfies CircuitApi;
 }
 
@@ -183,5 +186,54 @@ describe("the circuit console", () => {
     render(<App api={api} />);
 
     expect(await screen.findByRole("alert")).toHaveTextContent("You are not signed in.");
+  });
+
+  it("shows an alert-held circuit without Reset, with the rule that tripped it", async () => {
+    const user = userEvent.setup();
+    const rule = "/subscriptions/0/resourceGroups/rg/providers/Microsoft.Insights/scheduledQueryRules/export-rejections";
+    const held = snapshot("invoice-export", "OpenedByAlert", {
+      alerts: {
+        mode: "Active",
+        active: true,
+        wouldOpen: false,
+        trippedBy: [rule],
+        rules: [{ ruleId: rule, suitability: "Suitable", firing: true }],
+        lastPolledAt: new Date().toISOString(),
+        lastSucceededAt: new Date().toISOString(),
+        lastError: null,
+        interval: "00:01:00",
+      },
+    });
+    const api = fakeApi([held]);
+    api.checkAlerts.mockResolvedValue({ ...held, state: "OpenedAfterAlert" });
+    render(<App api={api} />);
+
+    expect(await screen.findByText("Opened by alert", { selector: ".badge" })).toBeInTheDocument();
+    expect(screen.getByText("until the alert resolves")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Reset invoice export" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "invoice export" }));
+    const details = screen.getByRole("region", { name: /details of invoice export/i });
+    expect(within(details).getByText(/Tripped by/).parentElement).toHaveTextContent("Tripped by export-rejections.");
+
+    await user.click(within(details).getByRole("button", { name: "Check alerts now" }));
+
+    expect(api.checkAlerts).toHaveBeenCalledWith("invoice-export");
+    expect(await screen.findByRole("status")).toHaveTextContent("the circuit is opened after alert");
+  });
+
+  it("shows why a circuit is unhealthy, and no alert section without linked rules", async () => {
+    const user = userEvent.setup();
+    const unhealthy = snapshot("search-index", "Open", {
+      health: { status: "Unhealthy", reasons: [{ code: 201, message: "Switch main/search should be Open but is Closed." }] },
+    });
+    render(<App api={fakeApi([unhealthy], ["CircuitBreaker.Reader"])} />);
+
+    await user.click(await screen.findByRole("button", { name: "search index" }));
+
+    const details = screen.getByRole("region", { name: /details of search index/i });
+    expect(within(details).getByText("Health: unhealthy")).toBeInTheDocument();
+    expect(within(details).getByText(/should be Open but is Closed/)).toBeInTheDocument();
+    expect(within(details).queryByRole("heading", { name: "Alert rules" })).not.toBeInTheDocument();
   });
 });

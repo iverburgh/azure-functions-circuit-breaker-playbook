@@ -10,7 +10,7 @@
 | Storage account | the Durable Functions task hub (entity state, queues, timers) and the deployment package |
 | Log Analytics workspace and Application Insights | logs from the host, metrics from the worker |
 | App Service Authentication (Easy Auth) with Entra ID | validates every token before the Function sees the request |
-| Role assignments | the Function's managed identity on the storage account, and optionally on switch targets |
+| Role assignments | the Function's managed identity on the storage account, and optionally on switch targets and alert rule resource groups |
 
 There are no keys or connection strings: storage is reached with the managed identity
 (`AzureWebJobsStorage__accountName`, shared key access disabled), and so are switch targets.
@@ -52,6 +52,9 @@ az deployment group create --resource-group rg-circuit-breaker --parameters infr
 | `allowedOrigins` | optional: where the console is hosted, if not on the API's origin |
 | `taskHubName` | the Durable Functions task hub; a new name starts with empty state |
 | `maximumInstanceCount` | scale-out limit |
+| `alertPollingMode` | `Off` (default), `Shadow` or `Active`; see [alert-driven-opening.md](alert-driven-opening.md) |
+| `alertPollingInterval` | how often each circuit with linked rules polls, default `00:01:00` |
+| `alertRuleResourceGroups` | optional: resource groups (same subscription) holding linked alert rules; the breaker gets Monitoring Reader there |
 
 ## 3. Publish the Function
 
@@ -99,6 +102,8 @@ The Function checks roles on every request; the console only hides what you may 
 | `GET /api/circuits/{key}` — one circuit | ✓ | ✓ | ✓ |
 | `GET /api/circuits` — all circuits | | ✓ | ✓ |
 | `POST /api/circuits/{key}/actions/{action}` — isolate, disable, reset, delete | | | ✓ |
+| `POST /api/circuits/{key}/alert-checks` — poll the linked alert rules now | | | ✓ |
+| `GET /api/health` — health of all circuits | ✓ | ✓ | ✓ |
 | `GET /api/me` — who am I | any authenticated caller |
 
 ## How the Function knows who calls
@@ -124,6 +129,14 @@ Function refuses to start in that mode outside the Development environment.
 
 Both are broad. Put the flags the breaker manages in a store, and the subscriptions in a namespace,
 where that breadth is acceptable — or grant the role on a dedicated store or namespace.
+
+## Permissions for alert rules
+
+For [alert-driven opening](alert-driven-opening.md#permissions) the managed identity needs
+**Monitoring Reader** on the resource groups that hold the linked rules — read-only, but it can read
+all monitoring data there. The template assigns it per entry in `alertRuleResourceGroups`; use
+[monitoring-reader.bicep](../infra/modules/monitoring-reader.bicep) for other subscriptions. Without
+it, Resource Graph hides the rules and they show as "not found".
 
 ## Hardening further
 

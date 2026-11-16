@@ -5,9 +5,10 @@ import { OperatorRole } from "./types";
 // Demo data for `npm run dev:mock`: explore the console without running the breaker.
 // The real rules live in the breaker; this mock only imitates them.
 const targets: Record<Exclude<CircuitAction, "Delete">, { to: CircuitState; from: CircuitState[] }> = {
-  Isolate: { to: "Isolated", from: ["Closed", "Open", "HalfOpen", "Disabled"] },
-  Disable: { to: "Disabled", from: ["Closed", "Open", "HalfOpen", "Isolated"] },
-  Reset: { to: "Closed", from: ["Open", "HalfOpen", "Isolated", "Disabled"] },
+  Isolate: { to: "Isolated", from: ["Closed", "Open", "HalfOpen", "Disabled", "OpenedByAlert", "OpenedAfterAlert"] },
+  Disable: { to: "Disabled", from: ["Closed", "Open", "HalfOpen", "Isolated", "OpenedByAlert", "OpenedAfterAlert"] },
+  // No Reset while an alert fires: close the alert first, or Disable as an emergency release.
+  Reset: { to: "Closed", from: ["Open", "HalfOpen", "Isolated", "Disabled", "OpenedAfterAlert"] },
 };
 
 function allowedActions(state: CircuitState): CircuitAction[] {
@@ -18,6 +19,8 @@ function allowedActions(state: CircuitState): CircuitAction[] {
 function ago(seconds: number): string {
   return new Date(Date.now() - seconds * 1000).toISOString();
 }
+
+const alertRule = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-monitoring/providers/Microsoft.Insights/scheduledQueryRules/invoice-export-rejections";
 
 function circuit(key: string, displayName: string, state: CircuitState, extra: Partial<CircuitSnapshot> = {}): CircuitSnapshot {
   return {
@@ -78,6 +81,22 @@ export class MockCircuitApi implements CircuitApi {
     circuit("search-index", "Search index", "Disabled", {
       switch: { kind: "FeatureFlag", target: "main/search-indexing", desired: "Closed", applied: "Open", lastError: "403 Forbidden: missing App Configuration Data Owner role.", lastAttemptAt: ago(40), failedAttempts: 3 },
       history: [{ from: "Open", to: "Disabled", trigger: "Disable", at: ago(900), reason: "Breaker too sensitive during reindex", actor: "bob@example.com" }],
+      health: { status: "Unhealthy", reasons: [{ code: 201, message: "Switch main/search-indexing should be Closed but is Open after 3 failed attempt(s)." }] },
+    }),
+    circuit("invoice-export", "Invoice export", "OpenedByAlert", {
+      switch: { kind: "ServiceBusSubscription", target: "invoices/export", desired: "Open", applied: "Open", lastError: null, lastAttemptAt: ago(240), failedAttempts: 0 },
+      alerts: {
+        mode: "Active",
+        active: true,
+        wouldOpen: false,
+        trippedBy: [alertRule],
+        rules: [{ ruleId: alertRule, suitability: "Suitable", firing: true }],
+        lastPolledAt: ago(25),
+        lastSucceededAt: ago(25),
+        lastError: null,
+        interval: "00:01:00",
+      },
+      history: [{ from: "Closed", to: "OpenedByAlert", trigger: "AlertsActive", at: ago(240), reason: "Alert rule(s) firing: invoice-export-rejections." }],
     }),
   ];
 
@@ -116,5 +135,15 @@ export class MockCircuitApi implements CircuitApi {
     };
     this.circuits = this.circuits.map((c) => (c.key === key ? updated : c));
     return Promise.resolve({ accepted: true, message: `Circuit changed from ${current.state} to ${target.to}.`, circuit: updated });
+  }
+
+  checkAlerts(key: string): Promise<CircuitSnapshot | null> {
+    const current = this.circuits.find((c) => c.key === key);
+    if (!current?.alerts) {
+      return Promise.reject(new Error("The circuit links no alert rules."));
+    }
+    // The mock's alert keeps firing; close it in Azure Monitor to see the real breaker release the circuit.
+    current.alerts = { ...current.alerts, lastPolledAt: new Date().toISOString(), lastSucceededAt: new Date().toISOString() };
+    return Promise.resolve(structuredClone(current));
   }
 }

@@ -46,6 +46,7 @@ public static class CircuitEngine
             ScheduleStalenessCheck(data, now, effects);
         }
 
+        SyncAlertPolling(data, definition, now, effects);
         return effects;
     }
 
@@ -109,8 +110,9 @@ public static class CircuitEngine
                 return (new ProbePermit(true, data.State), effects);
             case Open:
                 return (new ProbePermit(false, Open, RetryAfter: data.RecoveryAt), effects);
-            case Isolated:
-                return (new ProbePermit(false, Isolated), effects);
+            case Isolated or OpenedByAlert or OpenedAfterAlert:
+                // Only a person, or the alert, ends these states; a probe could not change anything.
+                return (new ProbePermit(false, data.State), effects);
         }
 
         if (data.Probes.Count >= definition.HalfOpenMaxProbes)
@@ -185,6 +187,88 @@ public static class CircuitEngine
         return (false, effects);
     }
 
+    /// <summary>Whether a scheduled poll is the pending one. Any other due time is a duplicate or belongs to an unlinked rule set.</summary>
+    public static bool IsAlertPollDue(CircuitData data, DateTimeOffset dueAt) =>
+        data.Definition is { AlertRuleIds.Count: > 0 } && data.Alerts?.NextPollAt == dueAt;
+
+    /// <summary>Whether the entity should query Azure at all: only with linked rules and polling not off.</summary>
+    public static bool ShouldQueryAlerts(CircuitData data, AlertPollSettings settings) =>
+        data.Definition is { AlertRuleIds.Count: > 0 } && settings.Mode != AlertPollingMode.Off;
+
+    /// <summary>
+    /// Applies the result of an alert query. A failed query records the error and changes no state: an
+    /// outage of the monitoring plane must not open or close circuits. A scheduled poll always schedules
+    /// the next one, also in <see cref="AlertPollingMode.Off"/>, so switching the mode on needs no restart.
+    /// </summary>
+    /// <param name="result">Null when nothing was queried, because the mode is off.</param>
+    /// <param name="scheduled">False for an on-demand check, which only reschedules a broken loop.</param>
+    public static CircuitEffects ApplyAlertPoll(CircuitData data, AlertPollSettings settings, AlertPollResult? result, DateTimeOffset now, bool scheduled)
+    {
+        var effects = new CircuitEffects();
+        var definition = data.RequiredDefinition;
+        if (definition.AlertRuleIds.Count == 0)
+        {
+            effects.Ignored = "The circuit links no alert rules.";
+            return effects;
+        }
+
+        var alerts = data.Alerts ??= new AlertPollState { Since = now, Interval = settings.Interval };
+        alerts.Mode = settings.Mode;
+        alerts.Interval = settings.Interval;
+
+        if (settings.Mode == AlertPollingMode.Off)
+        {
+            alerts.Active = false;
+            alerts.WouldOpen = false;
+            alerts.TrippedBy.Clear();
+            alerts.LastError = null;
+            HandOverToPerson(data, now, effects, "Alert polling is off; a person decides when to close the circuit.");
+        }
+        else if (result?.Rules is not { } rules)
+        {
+            alerts.LastPolledAt = now;
+            alerts.LastError = result?.Error ?? "The alert rules were not queried.";
+        }
+        else
+        {
+            var (statuses, trippedBy) = AlertEvaluator.Evaluate(definition.AlertRuleIds, rules);
+            alerts.LastPolledAt = now;
+            alerts.LastSucceededAt = now;
+            alerts.LastError = null;
+            alerts.Rules = [.. statuses];
+            alerts.TrippedBy = [.. trippedBy];
+            var firing = trippedBy.Count > 0;
+            if (settings.Mode == AlertPollingMode.Active)
+            {
+                alerts.Active = firing;
+                alerts.WouldOpen = false;
+                if (firing)
+                {
+                    Transition(data, CircuitTrigger.AlertsActive, now, effects, $"Alert rule(s) firing: {string.Join(", ", trippedBy.Select(RuleName))}.");
+                }
+                else
+                {
+                    Transition(data, CircuitTrigger.AlertsCleared, now, effects, "All linked alert rules have resolved.");
+                }
+            }
+            else
+            {
+                alerts.Active = false;
+                alerts.WouldOpen = firing;
+                HandOverToPerson(data, now, effects, "Alert polling is in shadow mode; a person decides when to close the circuit.");
+            }
+        }
+
+        if (scheduled || IsPollChainBroken(alerts, now))
+        {
+            ScheduleAlertPoll(data, settings, now, effects);
+        }
+
+        return effects;
+    }
+
+    public static CircuitHealth Health(CircuitData data, DateTimeOffset now) => CircuitHealthRules.Evaluate(data, now);
+
     public static CircuitSnapshot ToSnapshot(CircuitData data, DateTimeOffset now)
     {
         var definition = data.RequiredDefinition;
@@ -210,6 +294,11 @@ public static class CircuitEngine
                 ? null
                 : new SwitchStatus(definition.Switch.Kind, definition.Switch.Target, data.Switch.Desired, data.Switch.Applied,
                     data.Switch.LastError, data.Switch.LastAttemptAt, data.Switch.FailedAttempts),
+            Alerts = definition.AlertRuleIds.Count == 0 || data.Alerts is not { } alerts
+                ? null
+                : new AlertStatus(alerts.Mode, alerts.Active, alerts.WouldOpen, [.. alerts.TrippedBy], [.. alerts.Rules],
+                    alerts.LastPolledAt, alerts.LastSucceededAt, alerts.LastError, alerts.Interval),
+            Health = Health(data, now),
             AllowedActions = CircuitTransitions.AllowedActions(data.State),
             History = [.. data.History],
             Definition = definition,
@@ -296,7 +385,7 @@ public static class CircuitEngine
                 data.RecoveryAt = now + RecoveryBackoff.Delay(definition, data.ConsecutiveReopens, data.Generation);
                 effects.Signals.Add(new ScheduledSignal(CircuitOperations.RecoveryTimeoutElapsed, new RecoveryTimer(data.Generation), data.RecoveryAt.Value));
                 break;
-            case Isolated or Disabled:
+            case Isolated or Disabled or OpenedByAlert or OpenedAfterAlert:
                 data.ConsecutiveReopens = 0;
                 break;
         }
@@ -324,6 +413,60 @@ public static class CircuitEngine
         data.NextStalenessCheckAt = dueAt;
         effects.Signals.Add(new ScheduledSignal(CircuitOperations.CheckStaleness, dueAt, dueAt));
     }
+
+    /// <summary>The poll interval until the first poll tells the engine the configured one.</summary>
+    public static readonly TimeSpan DefaultAlertPollInterval = TimeSpan.FromMinutes(1);
+
+    private static void SyncAlertPolling(CircuitData data, CircuitDefinition definition, DateTimeOffset now, CircuitEffects effects)
+    {
+        if (definition.AlertRuleIds.Count == 0)
+        {
+            if (data.Alerts is not null)
+            {
+                // The pending poll finds no due time any more and is ignored: the loop ends by itself.
+                data.Alerts = null;
+                HandOverToPerson(data, now, effects, "All alert rules were unlinked; a person decides when to close the circuit.");
+            }
+
+            return;
+        }
+
+        var alerts = data.Alerts ??= new AlertPollState { Since = now, Interval = DefaultAlertPollInterval };
+        alerts.Rules.RemoveAll(r => !definition.AlertRuleIds.Contains(r.RuleId, StringComparer.OrdinalIgnoreCase));
+        alerts.TrippedBy.RemoveAll(id => !definition.AlertRuleIds.Contains(id, StringComparer.OrdinalIgnoreCase));
+
+        // Registration (every client start-up) restarts a loop that was lost, for example after a roll-back and roll-forward.
+        if (alerts.NextPollAt is null || IsPollChainBroken(alerts, now))
+        {
+            alerts.NextPollAt = now;
+            effects.Signals.Add(new ScheduledSignal(CircuitOperations.PollAlerts, now, now));
+        }
+    }
+
+    private static bool IsPollChainBroken(AlertPollState alerts, DateTimeOffset now) =>
+        alerts.NextPollAt is not { } next || now - next > Max(alerts.Interval * 3, TimeSpan.FromMinutes(5));
+
+    private static void ScheduleAlertPoll(CircuitData data, AlertPollSettings settings, DateTimeOffset now, CircuitEffects effects)
+    {
+        // Jitter keeps many circuits from querying Resource Graph in the same second, which it throttles.
+        var spread = ((DeterministicJitter.Unit($"{data.RequiredDefinition.Key}:{now.UtcTicks}") * 2) - 1) * Math.Clamp(settings.Jitter, 0, 0.5);
+        var dueAt = now + (settings.Interval * (1 + spread));
+        data.Alerts!.NextPollAt = dueAt;
+        effects.Signals.Add(new ScheduledSignal(CircuitOperations.PollAlerts, dueAt, dueAt));
+    }
+
+    /// <summary>A circuit held open by an alert that no longer drives it goes to a person, never straight to closed.</summary>
+    private static void HandOverToPerson(CircuitData data, DateTimeOffset now, CircuitEffects effects, string reason)
+    {
+        if (data.State == OpenedByAlert)
+        {
+            Transition(data, CircuitTrigger.AlertsCleared, now, effects, reason);
+        }
+    }
+
+    private static string RuleName(string ruleId) => ruleId[(ruleId.LastIndexOf('/') + 1)..];
+
+    private static TimeSpan Max(TimeSpan a, TimeSpan b) => a > b ? a : b;
 
     private static bool Counts(CircuitDefinition definition, FailureCategory category) => definition.CountedCategories.Contains(category);
 

@@ -29,6 +29,16 @@ param maximumInstanceCount int = 10
 @description('Optional: origins allowed to call the API from a browser, for example the URL where the management console is hosted.')
 param allowedOrigins array = []
 
+@description('Alert-driven opening: Off (default), Shadow or Active. Release the new states to every client before leaving Off; see docs/alert-driven-opening.md.')
+@allowed(['Off', 'Shadow', 'Active'])
+param alertPollingMode string = 'Off'
+
+@description('How often each circuit with linked alert rules queries Resource Graph, as a TimeSpan. Resource Graph throttles per identity.')
+param alertPollingInterval string = '00:01:00'
+
+@description('Resource groups (in this subscription) that hold the alert rules circuits link to. The breaker gets Monitoring Reader on each. Grant other subscriptions with a separate deployment of modules/monitoring-reader.bicep.')
+param alertRuleResourceGroups array = []
+
 var suffix = uniqueString(resourceGroup().id, name)
 var storageAccountName = take(toLower(replace('st${name}${suffix}', '-', '')), 24)
 var deploymentContainerName = 'deployments'
@@ -139,6 +149,8 @@ resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
           { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: insights.properties.ConnectionString }
           { name: 'TaskHubName', value: taskHubName }
           { name: 'Security__Mode', value: 'EasyAuth' }
+          { name: 'AlertPolling__Mode', value: alertPollingMode }
+          { name: 'AlertPolling__Interval', value: alertPollingInterval }
         ],
         empty(appConfigurationStoreName)
           ? []
@@ -222,6 +234,20 @@ resource serviceBusRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = i
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', roles.serviceBusDataOwner)
   }
 }
+
+// Role assignments can take several minutes to reach Resource Graph. Until then the rules report
+// NotFound; that is why the rollout starts in Shadow mode. A CanNotDelete lock on a resource group
+// also blocks removing this assignment later.
+module alertRuleReaders 'modules/monitoring-reader.bicep' = [
+  for resourceGroupName in alertRuleResourceGroups: {
+    name: take('monitoring-reader-${resourceGroupName}', 64)
+    scope: resourceGroup(resourceGroupName)
+    params: {
+      principalId: functionApp.identity.principalId
+      functionAppId: functionApp.id
+    }
+  }
+]
 
 output functionAppName string = functionApp.name
 output functionAppUrl string = 'https://${functionApp.properties.defaultHostName}/'

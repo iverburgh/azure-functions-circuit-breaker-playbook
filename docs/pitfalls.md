@@ -60,6 +60,13 @@ A new task hub name means empty state and abandoned timers. That is a feature wh
 start ([operations.md](operations.md#starting-with-empty-state)), and an outage of all overrides when
 done by accident: isolated circuits are closed again.
 
+### A new enum value before every reader knows it
+
+Add a state, and every client and console that does not know it fails to read any snapshot that
+contains it. The client then treats the breaker as unreachable and lets calls through — exactly when
+the new state says stop. Enums are append-only, and new values are released to all readers before
+anything produces them ([durable-state.md](durable-state.md#rules-for-durable-state)).
+
 ## Counting the wrong things
 
 ### Functional errors that open the circuit
@@ -78,6 +85,14 @@ The client ignores those, unless the circuit's own attempt timeout fired: that i
 "Five failures in a row" never trips on a dependency that fails half of its calls, because the
 successes in between reset the counter. Count failures in a time window
 ([failure-threshold.md](failure-threshold.md#why-a-time-window-not-consecutive-failures)).
+
+### One poison item that stops a batch job
+
+A job processes a batch, and one item has bad data. It fails the same way at every run, the job
+reports the failure every time, and the circuit opens: all work stops for one record. The breaker did
+its job — it contained a repeating failure — but the cause is not the dependency. Classify a
+deterministic data error as functional, or quarantine the item (a dead-letter, a status column) and
+continue with the rest. Then reset the circuit.
 
 ## Timeouts and retries
 
@@ -126,6 +141,39 @@ message ([half-open-probes.md](half-open-probes.md#switch-driven-work-while-half
 An operator who enables a flag the breaker disabled fights the breaker, and loses at the next
 transition. Give the breaker's flags their own label (`Switches:FeatureFlagLabel`) and make clear
 they are managed by the breaker; overrule through the console instead.
+
+### Auto-forwarding subscriptions flush at half-open
+
+One subscription per partner that auto-forwards to a shared queue looks like a neat per-partner
+switch. When it becomes active again, the whole backlog is forwarded at once — no trickle, no probe.
+Stop per partner at the consumer instead ([switches.md](switches.md#do-not-use-one-auto-forwarding-subscription-per-part)).
+
+## Alert-driven opening
+
+### "Not found" can mean "not allowed"
+
+Azure Resource Graph silently leaves out resources the identity may not read. A rule without
+Monitoring Reader looks deleted, and right after a deployment the role assignment may take more than
+nine minutes to apply. Start in `Shadow` and check the rule suitability before going `Active`
+([alert-driven-opening.md](alert-driven-opening.md#what-azure-does-and-what-that-means)).
+
+### A rule that measures what the circuit stops
+
+When the circuit opens, the work stops, the errors stop, the alert resolves — and the circuit would
+close and start again. Measure at the dependency or the receiving side, not the work you stop. The
+breaker does not close after an alert by itself (`OpenedAfterAlert`), so the loop needs a person.
+
+### Polling too often
+
+Resource Graph throttles per identity. Many circuits polling every few seconds, in step, get
+throttled together. Keep the jitter, and raise `AlertPolling:Interval` rather than lowering it: a
+log search alert takes minutes to fire anyway.
+
+### A stateless rule
+
+A rule without "automatically resolve alerts" never resolves; it would hold a circuit open for good.
+The breaker ignores it and reports it as a health reason (103) — fix the rule rather than wondering
+why the circuit does not open.
 
 ## Security
 

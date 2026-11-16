@@ -14,6 +14,9 @@ closed, since when, why (the last failure and the history), and whether their sw
 | `Open`, `consecutiveReopens` rising | probes keep failing; recovery timeouts are doubling | look at the dependency, not at the breaker |
 | `HalfOpen` for longer than a few minutes | no caller is asking for a probe | normal when traffic is low; the next call probes |
 | `Isolated` or `Disabled` | an operator overrode it | check the history for who and why; do not leave it forgotten |
+| `OpenedByAlert` | a linked alert rule fires; **Tripped by** names it | fix the cause; see [a circuit is opened by an alert](#a-circuit-is-opened-by-an-alert) |
+| `OpenedAfterAlert` | the alert resolved; the circuit waits for a person | check the cause is really gone, then **Reset** |
+| health callout (Degraded or Unhealthy) | the breaker cannot fully carry out what it decides | read the reason code, see [health](observability-and-testing.md#health) |
 | switch with an error | the breaker decided, but could not flip the switch | see [a switch is out of sync](#a-switch-is-out-of-sync) |
 | failures in the window close to the threshold | the dependency is degraded | check whether the threshold fits the traffic |
 
@@ -29,6 +32,35 @@ When the vendor confirms the fix, **Reset**.
 
 Reset the circuit. It closes with a clean window and no backoff. If the fix was not real, the circuit
 opens again as soon as the threshold is reached.
+
+### A circuit is opened by an alert
+
+The circuit stays open while the alert fires, and **Reset** is not offered. Follow the runbook in
+[alert-driven-opening.md](alert-driven-opening.md#runbook-a-circuit-is-opened-by-an-alert): read
+**Tripped by**, fix the cause, repair data, close the alert, **Check alerts now**, then **Reset**. To
+let work flow while the alert still fires, **Disable** the circuit.
+
+### Planned pause of intake
+
+For maintenance, a migration or a restore, you want a system to stop taking in new work and let the
+work already inside drain — not to stop everything halfway.
+
+1. **Find the intake circuits**: the ones whose switch stops work at the entry point (the first
+   consumer of incoming messages, the job that fetches new items). Read the keys from
+   `GET /api/circuits` or the console; never build keys by hand from a naming convention, a typo
+   silently isolates nothing.
+2. **Isolate them** with one reason ("planned maintenance, change reference"), through the console or
+   `POST /api/circuits/{key}/actions/isolate`. New work waits in its subscription.
+3. **Wait until downstream work has dried up**: queues behind the intake empty, no more outcomes for
+   the downstream circuits.
+4. **Handle what has no circuit.** Timers, side paths and manual triggers outside any circuit keep
+   running; stop them separately (disable the function, a feature flag) and write them in your
+   runbook.
+5. Do the maintenance.
+6. **Reset** the intake circuits (and restart what you stopped by hand). Work that waited resumes.
+
+Script the isolate and reset steps against the API with the Operator role, so the pause is the same
+every time and recorded with actor and reason in each circuit's history.
 
 ### The breaker opens when it should not
 

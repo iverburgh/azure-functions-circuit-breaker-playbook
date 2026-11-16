@@ -10,13 +10,13 @@ public sealed class StateMachineTests
     {
         // A seeded random walk through thousands of operations; the history must only contain listed transitions.
         var random = new Random(20260105);
-        var data = Registered();
+        var data = Registered(Definition(d => d with { AlertRuleIds = [Rule] }));
         var now = T0;
         var transitions = new List<TransitionRecord>();
         for (var step = 0; step < 5_000; step++)
         {
             now = now.AddSeconds(random.Next(0, 15));
-            var effects = random.Next(9) switch
+            var effects = random.Next(10) switch
             {
                 0 or 1 => CircuitEngine.ReportOutcomes(data, Failures(random.Next(1, 3)), now),
                 2 => CircuitEngine.ReportOutcomes(data, Successes(random.Next(1, 5)), now),
@@ -24,6 +24,7 @@ public sealed class StateMachineTests
                 4 => ProbeAndReport(data, now, random),
                 5 => CircuitEngine.ProbeLeaseExpired(data, new ProbeLeaseTimer(data.Probes.FirstOrDefault()?.Id ?? Guid.NewGuid(), data.Generation), now),
                 6 => CircuitEngine.ApplyManualAction(data, new ManualActionCommand(RandomAction(random), "test", "tester"), now).Effects,
+                7 => RandomAlertPoll(data, now, random),
                 _ => Advance(data, now),
             };
             transitions.AddRange(effects.Transitions);
@@ -31,6 +32,7 @@ public sealed class StateMachineTests
         }
 
         Assert.That(transitions, Has.Count.GreaterThan(100), "The walk should exercise many transitions.");
+        Assert.That(transitions.Select(t => t.To).Distinct(), Is.EquivalentTo(Enum.GetValues<CircuitState>()), "The walk should reach every state.");
         Assert.That(transitions.Select(t => (t.From, t.Trigger, t.To)).Distinct(),
             Is.SubsetOf(CircuitTransitions.All.Select(t => (t.From, t.Trigger.ToString(), t.To))));
         Assert.That(data.Generation, Is.EqualTo(transitions.Count), "Every transition increments the generation exactly once.");
@@ -51,6 +53,8 @@ public sealed class StateMachineTests
     [TestCase(CircuitState.HalfOpen, new[] { CircuitAction.Isolate, CircuitAction.Disable, CircuitAction.Reset, CircuitAction.Delete })]
     [TestCase(CircuitState.Isolated, new[] { CircuitAction.Disable, CircuitAction.Reset, CircuitAction.Delete })]
     [TestCase(CircuitState.Disabled, new[] { CircuitAction.Isolate, CircuitAction.Reset, CircuitAction.Delete })]
+    [TestCase(CircuitState.OpenedByAlert, new[] { CircuitAction.Isolate, CircuitAction.Disable, CircuitAction.Delete })]
+    [TestCase(CircuitState.OpenedAfterAlert, new[] { CircuitAction.Isolate, CircuitAction.Disable, CircuitAction.Reset, CircuitAction.Delete })]
     public void The_allowed_actions_follow_from_the_table(CircuitState state, CircuitAction[] expected) =>
         Assert.That(CircuitTransitions.AllowedActions(state), Is.EqualTo(expected));
 
@@ -59,7 +63,9 @@ public sealed class StateMachineTests
     [TestCase(CircuitState.Disabled, SwitchPosition.Closed)]
     [TestCase(CircuitState.Open, SwitchPosition.Open)]
     [TestCase(CircuitState.Isolated, SwitchPosition.Open)]
-    public void Only_open_and_isolated_circuits_stop_work_behind_a_switch(CircuitState state, SwitchPosition position) =>
+    [TestCase(CircuitState.OpenedByAlert, SwitchPosition.Open)]
+    [TestCase(CircuitState.OpenedAfterAlert, SwitchPosition.Open)]
+    public void Open_isolated_and_alert_held_circuits_stop_work_behind_a_switch(CircuitState state, SwitchPosition position) =>
         Assert.That(CircuitTransitions.SwitchPositionFor(state), Is.EqualTo(position));
 
     [Test]
@@ -93,6 +99,15 @@ public sealed class StateMachineTests
         data is { State: CircuitState.Open, RecoveryAt: { } recoveryAt } && recoveryAt <= now
             ? CircuitEngine.RecoveryTimeoutElapsed(data, new RecoveryTimer(data.Generation), now)
             : new CircuitEffects();
+
+    private static CircuitEffects RandomAlertPoll(CircuitData data, DateTimeOffset now, Random random)
+    {
+        var mode = random.Next(10) == 0 ? AlertPollingMode.Off : AlertPollingMode.Active;
+        var result = random.Next(10) == 0
+            ? AlertPollResult.Failure("Throttled")
+            : AlertPollResult.Success([RuleInfo(firing: random.Next(4) == 0)]);
+        return CircuitEngine.ApplyAlertPoll(data, new AlertPollSettings(mode, TimeSpan.FromMinutes(1)), result, now, scheduled: true);
+    }
 
     private static CircuitAction RandomAction(Random random) =>
         random.Next(10) switch

@@ -196,6 +196,75 @@ public sealed class CircuitApi(RequestAuthorizer authorizer, IOptions<ApiOptions
         return result.Accepted ? new OkObjectResult(result) : new ConflictObjectResult(result);
     }
 
+    /// <summary>"Check alerts now": an operator who just closed an alert need not wait for the next poll.</summary>
+    [Function("CheckCircuitAlerts")]
+    public async Task<IActionResult> CheckAlerts(
+        [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "circuits/{key}/alert-checks")] HttpRequest request,
+        string key,
+        [DurableClient] DurableTaskClient client)
+    {
+        if (authorizer.Require(request, Roles.Operator) is { } denied)
+        {
+            return denied;
+        }
+
+        var existing = await client.Entities.GetEntityAsync<CircuitData>(CircuitEntity.IdFor(key), includeState: true, request.HttpContext.RequestAborted);
+        if (existing?.State.Definition is null)
+        {
+            return new NotFoundResult();
+        }
+
+        if (existing.State.Definition.AlertRuleIds.Count == 0)
+        {
+            return Problem("The circuit links no alert rules.");
+        }
+
+        var instanceId = await client.ScheduleNewOrchestrationInstanceAsync(
+            nameof(CircuitOrchestrations.AlertCheckOrchestrator), key, request.HttpContext.RequestAborted);
+        var snapshot = await WaitForOutputAsync<CircuitSnapshot>(client, instanceId, options.Value.ManualActionWaitTimeout, request.HttpContext.RequestAborted);
+        return snapshot is null
+            ? new ObjectResult(new ProblemDetails { Title = "The check is queued but did not complete in time. Refresh to see the result." })
+            {
+                StatusCode = StatusCodes.Status202Accepted,
+            }
+            : new OkObjectResult(snapshot);
+    }
+
+    /// <summary>
+    /// Whether the breaker can carry out what it decides, for every circuit. Open circuits are not a
+    /// health problem; a stale alert poller, an unusable rule or a switch that cannot be set is.
+    /// </summary>
+    [Function("GetHealth")]
+    public async Task<IActionResult> Health(
+        [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "health")] HttpRequest request,
+        [DurableClient] DurableTaskClient client)
+    {
+        if (authorizer.Require(request, Roles.Reporter, Roles.Reader, Roles.Operator) is { } denied)
+        {
+            return denied;
+        }
+
+        var now = timeProvider.GetUtcNow();
+        var circuits = new List<CircuitHealthEntry>();
+        var query = new EntityQuery { InstanceIdStartsWith = CircuitEntity.Name, IncludeState = true };
+        await foreach (var entity in client.Entities.GetAllEntitiesAsync<CircuitData>(query).WithCancellation(request.HttpContext.RequestAborted))
+        {
+            if (entity.State?.Definition is not null)
+            {
+                circuits.Add(new CircuitHealthEntry(entity.State.Definition.Key, entity.State.State, CircuitEngine.Health(entity.State, now)));
+            }
+        }
+
+        return new OkObjectResult(BuildHealthReport(circuits));
+    }
+
+    internal static BreakerHealthReport BuildHealthReport(IReadOnlyCollection<CircuitHealthEntry> entries)
+    {
+        var notHealthy = entries.Where(c => c.Health.Status != CircuitHealthStatus.Healthy).OrderBy(c => c.Key, StringComparer.Ordinal).ToList();
+        var status = notHealthy.Count == 0 ? CircuitHealthStatus.Healthy : notHealthy.Max(c => c.Health.Status);
+        return new BreakerHealthReport(status, entries.Count, notHealthy);
+    }
+
     [Function("WhoAmI")]
     public IActionResult WhoAmI([HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "me")] HttpRequest request) =>
         authorizer.GetCaller(request) is { } caller ? new OkObjectResult(caller) : new UnauthorizedResult();

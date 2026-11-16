@@ -16,16 +16,20 @@ public static class RecoveryBackoff
         var delay = Math.Min(definition.RecoveryTimeout.TotalMilliseconds * factor, definition.MaxRecoveryTimeout.TotalMilliseconds);
 
         // Deterministic jitter: the same circuit and generation always give the same delay, which keeps tests exact.
-        var spread = ((Unit(definition.Key, generation) * 2) - 1) * definition.RecoveryJitter;
+        var spread = ((DeterministicJitter.Unit($"{definition.Key}:{generation}") * 2) - 1) * definition.RecoveryJitter;
         return TimeSpan.FromMilliseconds(delay * (1 + spread));
     }
+}
 
-    private static double Unit(string key, long generation)
+/// <summary>A repeatable number in [0, 1] for a seed (FNV-1a), so jittered schedules stay exact in tests.</summary>
+internal static class DeterministicJitter
+{
+    public static double Unit(string seed)
     {
         const ulong offset = 14695981039346656037;
         const ulong prime = 1099511628211;
         var hash = offset;
-        foreach (var b in Encoding.UTF8.GetBytes($"{key}:{generation}"))
+        foreach (var b in Encoding.UTF8.GetBytes(seed))
         {
             hash = (hash ^ b) * prime;
         }

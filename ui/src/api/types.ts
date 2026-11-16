@@ -1,6 +1,6 @@
 // Mirrors CircuitBreaker.Contracts. The breaker serializes with camelCase names and enums as strings.
 
-export type CircuitState = "Closed" | "Open" | "HalfOpen" | "Isolated" | "Disabled";
+export type CircuitState = "Closed" | "Open" | "HalfOpen" | "Isolated" | "Disabled" | "OpenedByAlert" | "OpenedAfterAlert";
 
 export type FailureCategory = "Timeout" | "Exception" | "ServerError" | "Throttled" | "Functional";
 
@@ -44,6 +44,41 @@ export interface CircuitDefinition {
   halfOpenMaxProbes: number;
   halfOpenSuccessThreshold: number;
   probeTimeout: string;
+  alertRuleIds?: string[];
+}
+
+export type AlertPollingMode = "Off" | "Shadow" | "Active";
+
+export type AlertRuleSuitability = "Suitable" | "UnsupportedType" | "NotFound" | "Stateless" | "Disabled";
+
+export interface AlertRuleStatus {
+  ruleId: string;
+  suitability: AlertRuleSuitability;
+  firing: boolean;
+}
+
+export interface AlertStatus {
+  mode: AlertPollingMode;
+  active: boolean;
+  wouldOpen: boolean;
+  trippedBy: string[];
+  rules: AlertRuleStatus[];
+  lastPolledAt: string | null;
+  lastSucceededAt: string | null;
+  lastError: string | null;
+  interval: string;
+}
+
+export type CircuitHealthStatus = "Healthy" | "Degraded" | "Unhealthy";
+
+export interface HealthReason {
+  code: number;
+  message: string;
+}
+
+export interface CircuitHealth {
+  status: CircuitHealthStatus;
+  reasons: HealthReason[];
 }
 
 export interface CircuitSnapshot {
@@ -63,6 +98,10 @@ export interface CircuitSnapshot {
   probeSuccesses: number;
   lastFailure: FailureSample | null;
   switch: SwitchStatus | null;
+  /** Absent or null when the circuit links no alert rules. */
+  alerts?: AlertStatus | null;
+  /** Absent from older breakers: treat as healthy. */
+  health?: CircuitHealth;
   allowedActions: CircuitAction[];
   history: TransitionRecord[];
   definition: CircuitDefinition;
@@ -81,4 +120,4 @@ export interface ManualActionResult {
 
 export const OperatorRole = "CircuitBreaker.Operator";
 
-export const States: CircuitState[] = ["Closed", "Open", "HalfOpen", "Isolated", "Disabled"];
+export const States: CircuitState[] = ["Closed", "Open", "HalfOpen", "OpenedByAlert", "OpenedAfterAlert", "Isolated", "Disabled"];

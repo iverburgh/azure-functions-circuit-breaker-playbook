@@ -71,3 +71,23 @@ Content-Type: application/json
 
 ### List all circuits
 GET {{baseUrl}}/circuits
+
+### Health: can the breaker carry out what it decides? Open circuits are not a health problem.
+GET {{baseUrl}}/health
+
+### Link an alert rule (alert-driven opening; needs AlertPolling__Mode Shadow or Active and Monitoring Reader on the rule)
+PUT {{baseUrl}}/circuits/demo-api
+Content-Type: application/json
+
+{
+  "key": "demo-api",
+  "displayName": "Demo API",
+  "failureThreshold": 3,
+  "recoveryTimeout": "00:00:15",
+  "alertRuleIds": [
+    "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-monitoring/providers/Microsoft.Insights/scheduledQueryRules/demo-api-errors"
+  ]
+}
+
+### Check alerts now, instead of waiting for the next poll (operator)
+POST {{baseUrl}}/circuits/demo-api/alert-checks

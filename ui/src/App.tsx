@@ -29,6 +29,7 @@ export function App({ api, refreshIntervalMs = 10_000 }: Props) {
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [pending, setPending] = useState<PendingAction | null>(null);
   const [busy, setBusy] = useState(false);
+  const [checking, setChecking] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const recent = useRef(new Map<string, RecentChange>());
 
@@ -98,6 +99,26 @@ export function App({ api, refreshIntervalMs = 10_000 }: Props) {
     }
   }
 
+  async function checkAlerts(circuit: CircuitSnapshot) {
+    setChecking(true);
+    try {
+      const result = await api.checkAlerts(circuit.key);
+      setNotice(
+        result
+          ? { text: `${circuit.displayName}: alerts checked, the circuit is ${(stateLabels[result.state] ?? result.state).toLowerCase()}.`, ok: true }
+          : { text: `${circuit.displayName}: the alert check is still running; refresh in a moment.`, ok: true },
+      );
+      if (result) {
+        recent.current.set(circuit.key, { snapshot: result, until: Date.now() + RecentChangeLifetimeMs });
+      }
+    } catch (e) {
+      setNotice({ text: e instanceof Error ? e.message : String(e), ok: false });
+    } finally {
+      setChecking(false);
+      await refresh();
+    }
+  }
+
   return (
     <main>
       <header>
@@ -154,7 +175,7 @@ export function App({ api, refreshIntervalMs = 10_000 }: Props) {
         />
       )}
 
-      {selected && <CircuitDetails circuit={selected} now={now} />}
+      {selected && <CircuitDetails circuit={selected} now={now} canOperate={canOperate} checking={checking} onCheckAlerts={(circuit) => void checkAlerts(circuit)} />}
 
       {pending && <ActionDialog circuit={pending.circuit} action={pending.action} busy={busy} onConfirm={(reason) => void confirm(reason)} onCancel={() => setPending(null)} />}
     </main>

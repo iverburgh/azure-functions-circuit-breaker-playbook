@@ -13,6 +13,7 @@ public sealed class CircuitMetrics
     private readonly Counter<long> _transitions;
     private readonly Counter<long> _probeRequests;
     private readonly Counter<long> _switchUpdates;
+    private readonly Counter<long> _alertPolls;
 
     public CircuitMetrics(IMeterFactory meterFactory)
     {
@@ -21,6 +22,7 @@ public sealed class CircuitMetrics
         _transitions = meter.CreateCounter<long>("circuitbreaker.transitions", description: "State transitions, by source state, target state and trigger.");
         _probeRequests = meter.CreateCounter<long>("circuitbreaker.probe_requests", description: "Requests for a probe permit, by result.");
         _switchUpdates = meter.CreateCounter<long>("circuitbreaker.switch_updates", description: "Attempts to flip a switch, by result.");
+        _alertPolls = meter.CreateCounter<long>("circuitbreaker.alert_polls", description: "Alert rule queries, by result (success or failure kind).");
     }
 
     public void RecordOutcomes(string circuit, OutcomeReport report)
@@ -51,6 +53,9 @@ public sealed class CircuitMetrics
 
     public void RecordSwitchUpdate(string circuit, bool succeeded) =>
         _switchUpdates.Add(1, Tag("circuit", circuit), Tag("result", succeeded ? "success" : "failure"));
+
+    public void RecordAlertPoll(string circuit, string result) =>
+        _alertPolls.Add(1, Tag("circuit", circuit), Tag("result", result));
 
     private static KeyValuePair<string, object?> Tag(string key, object? value) => new(key, value);
 }
@@ -87,4 +92,7 @@ internal static partial class Log
 
     [LoggerMessage(EventId = 1010, Level = LogLevel.Information, Message = "Manual action {Action} on circuit {CircuitKey} by {Actor}: accepted {Accepted}. {Message} Reason: {Reason}")]
     public static partial void ManualAction(this ILogger logger, string circuitKey, CircuitAction action, string actor, bool accepted, string message, string reason);
+
+    [LoggerMessage(EventId = 1011, Level = LogLevel.Warning, Message = "Alert poll for circuit {CircuitKey} failed ({FailureKind}); the state is unchanged")]
+    public static partial void AlertPollFailed(this ILogger logger, Exception exception, string circuitKey, string failureKind);
 }

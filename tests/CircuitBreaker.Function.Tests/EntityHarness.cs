@@ -2,6 +2,7 @@ using System.Diagnostics.Metrics;
 using System.Text.Json;
 using CircuitBreaker.Contracts;
 using CircuitBreaker.Core;
+using CircuitBreaker.Function.Alerts;
 using CircuitBreaker.Function.Entities;
 using CircuitBreaker.Function.Observability;
 using CircuitBreaker.Function.Switches;
@@ -44,6 +45,11 @@ internal sealed class EntityHarness : IDisposable
 
     public FakeSwitch Switch { get; } = new();
 
+    public FakeAlertRuleClient AlertRules { get; } = new();
+
+    /// <summary>Active and without jitter, so polls come exactly one interval apart.</summary>
+    public AlertPollingOptions AlertOptions { get; } = new() { Mode = AlertPollingMode.Active, Jitter = 0 };
+
     public FakeLogger<CircuitEntity> Logger { get; } = new();
 
     public CircuitMetrics Metrics { get; }
@@ -83,7 +89,8 @@ internal sealed class EntityHarness : IDisposable
         {
             var state = new FakeEntityState(_persistedState);
             var context = new FakeEntityContext(new EntityInstanceId(CircuitEntity.Name, Key));
-            var entity = new CircuitEntity(new FakeSwitchProvider(Switch), Options.Create(new SwitchOptions()), Metrics, Time, Logger);
+            var entity = new CircuitEntity(
+                new FakeSwitchProvider(Switch), Options.Create(new SwitchOptions()), AlertRules, Options.Create(AlertOptions), Metrics, Time, Logger);
             var result = await ((ITaskEntity)entity).RunAsync(new FakeEntityOperation(operation, input, state, context));
 
             if (!crashBeforeCommit)
@@ -185,6 +192,34 @@ internal sealed class EntityHarness : IDisposable
     private sealed class FakeSwitchProvider(FakeSwitch fakeSwitch) : ICircuitSwitchProvider
     {
         public ICircuitSwitch Get(SwitchDefinition definition) => fakeSwitch;
+    }
+}
+
+/// <summary>Answers alert queries from a settable list of rules, or fails with a settable exception.</summary>
+internal sealed class FakeAlertRuleClient : IAlertRuleClient
+{
+    public List<AlertRuleInfo> Rules { get; } = [];
+
+    public Exception? Fail { get; set; }
+
+    public int Queries { get; private set; }
+
+    public Task<IReadOnlyList<AlertRuleInfo>> GetRulesAsync(IReadOnlyCollection<string> ruleIds, CancellationToken cancellationToken)
+    {
+        Queries++;
+        if (Fail is not null)
+        {
+            throw Fail;
+        }
+
+        return Task.FromResult<IReadOnlyList<AlertRuleInfo>>([.. Rules.Where(r => ruleIds.Contains(r.RuleId, StringComparer.OrdinalIgnoreCase))]);
+    }
+
+    /// <summary>Sets whether a rule has an alert that fires; the rule itself stays found.</summary>
+    public void Firing(string ruleId, bool firing)
+    {
+        Rules.RemoveAll(r => r.RuleId.Equals(ruleId, StringComparison.OrdinalIgnoreCase));
+        Rules.Add(new AlertRuleInfo(ruleId.ToLowerInvariant(), Enabled: true, AutoMitigate: true, firing ? [$"{ruleId}/alerts/1"] : []));
     }
 }
 

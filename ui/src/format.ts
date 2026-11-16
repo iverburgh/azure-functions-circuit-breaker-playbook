@@ -56,4 +56,6 @@ export const stateLabels: Record<string, string> = {
   HalfOpen: "Half-open",
   Isolated: "Isolated",
   Disabled: "Disabled",
+  OpenedByAlert: "Opened by alert",
+  OpenedAfterAlert: "Opened after alert",
 };

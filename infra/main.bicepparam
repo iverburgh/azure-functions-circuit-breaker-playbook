@@ -9,3 +9,7 @@ param apiClientId = '<client-id-of-the-breaker-api-app-registration>'
 
 // Uncomment when the management console is hosted on its own origin:
 // param allowedOrigins = ['https://circuits.example.com']
+
+// Uncomment for alert-driven opening (start with Shadow; see docs/alert-driven-opening.md):
+// param alertPollingMode = 'Shadow'
+// param alertRuleResourceGroups = ['rg-monitoring']

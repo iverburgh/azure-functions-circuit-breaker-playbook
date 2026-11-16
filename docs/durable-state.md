@@ -16,6 +16,7 @@ process. A restart, a deployment, a scale-out or a crash loses nothing.
 | `Probes`, `ProbeSuccesses` | active probe leases with their expiry; successes so far while half-open |
 | `LastFailure`, `LastOutcomeAt`, `LastSeenAt` | for operators and for staleness |
 | `Switch` | desired and applied position, last error, retry schedule |
+| `Alerts` | for circuits with linked alert rules: mode, last poll, last success, rule suitability, which rules tripped it, last error |
 | `History` | the 20 most recent transitions: from, to, trigger, reason, actor, time |
 | `NextStalenessCheckAt` | the single pending staleness check |
 
@@ -33,6 +34,12 @@ Function's storage account.
 4. **Versioned by shape, not by number.** New fields get defaults, so old state still loads. For a
    breaking change, rename the task hub (`TaskHubName`) and let callers register afresh: a breaker's
    state is cheap to rebuild.
+5. **Enums are append-only.** States, triggers and the other enums are stored and sent by name. Add
+   new values at the end; never rename or remove one. A reader that does not know a value cannot read
+   the document at all — so release a new value to every reader (callers, console) **before**
+   anything produces it. [EnumContractTests.cs](../tests/CircuitBreaker.Core.Tests/EnumContractTests.cs)
+   pins every name in order, and [alert-driven-opening.md](alert-driven-opening.md#rolling-it-out)
+   shows the rollout for two new states.
 
 The test `The_state_is_stored_as_readable_json` in
 [CircuitEntityTests.cs](../tests/CircuitBreaker.Function.Tests/CircuitEntityTests.cs) checks the
@@ -49,6 +56,7 @@ An entity can signal itself at a future time. That is how the breaker wakes up w
 | `ProbeLeaseExpired` | a probe permit is granted | probe id and generation |
 | `ReconcileSwitch` | flipping a switch failed | the due time |
 | `CheckStaleness` | the circuit is registered, and after each check | the due time |
+| `PollAlerts` | a circuit with linked alert rules is registered, and after each poll | the due time |
 
 Signals can be delivered more than once, and can outlive the situation they were scheduled for. Each
 carries a token — a generation or a due time — and the entity ignores a signal whose token no longer

@@ -19,6 +19,10 @@ function recovery(circuit: CircuitSnapshot, now: number): string {
       return `${circuit.activeProbes}/${circuit.definition.halfOpenMaxProbes} probing, ${circuit.probeSuccesses}/${circuit.definition.halfOpenSuccessThreshold} ok`;
     case "Isolated":
       return "manual reset needed";
+    case "OpenedByAlert":
+      return "until the alert resolves";
+    case "OpenedAfterAlert":
+      return "manual reset needed";
     default:
       return "—";
   }

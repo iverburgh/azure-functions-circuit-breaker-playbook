@@ -14,6 +14,8 @@ public enum CircuitTrigger
     Isolate,
     Disable,
     Reset,
+    AlertsActive,
+    AlertsCleared,
 }
 
 public sealed record CircuitTransition(CircuitState From, CircuitTrigger Trigger, CircuitState To);
@@ -45,6 +47,22 @@ public static class CircuitTransitions
         new(HalfOpen, CircuitTrigger.Reset, Closed),
         new(Isolated, CircuitTrigger.Reset, Closed),
         new(Disabled, CircuitTrigger.Reset, Closed),
+
+        // A firing alert rule overrides the automatic states. Isolated and Disabled are a person's
+        // decision and ignore alerts. There is deliberately no Reset while the alert fires: close the
+        // alert first, or Disable the circuit as an emergency release.
+        new(Closed, CircuitTrigger.AlertsActive, OpenedByAlert),
+        new(Open, CircuitTrigger.AlertsActive, OpenedByAlert),
+        new(HalfOpen, CircuitTrigger.AlertsActive, OpenedByAlert),
+        new(OpenedAfterAlert, CircuitTrigger.AlertsActive, OpenedByAlert),
+        new(OpenedByAlert, CircuitTrigger.AlertsCleared, OpenedAfterAlert),
+        new(OpenedByAlert, CircuitTrigger.Isolate, Isolated),
+        new(OpenedByAlert, CircuitTrigger.Disable, Disabled),
+
+        // The alert resolved, but the data it was about may still need repair: a person closes the circuit.
+        new(OpenedAfterAlert, CircuitTrigger.Isolate, Isolated),
+        new(OpenedAfterAlert, CircuitTrigger.Disable, Disabled),
+        new(OpenedAfterAlert, CircuitTrigger.Reset, Closed),
     ];
 
     private static readonly Dictionary<(CircuitState, CircuitTrigger), CircuitState> Lookup =
@@ -78,7 +96,7 @@ public static class CircuitTransitions
         [CircuitAction.Reset] = CircuitTrigger.Reset,
     };
 
-    /// <summary>Where the switch belongs in a state: only an open or isolated circuit stops work.</summary>
+    /// <summary>Where the switch belongs in a state: open, isolated and alert-held circuits stop work.</summary>
     public static SwitchPosition SwitchPositionFor(CircuitState state) =>
-        state is Open or Isolated ? SwitchPosition.Open : SwitchPosition.Closed;
+        state is Open or Isolated or OpenedByAlert or OpenedAfterAlert ? SwitchPosition.Open : SwitchPosition.Closed;
 }

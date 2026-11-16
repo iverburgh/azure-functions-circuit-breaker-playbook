@@ -12,9 +12,10 @@ public sealed record ManualActionOrchestrationInput(string CircuitKey, ManualAct
 
 /// <summary>
 /// A client can signal an entity, but not wait for its answer. These one-step orchestrations call the
-/// entity and return its answer, for the two operations that need one: handing out a probe permit
-/// (atomically, so concurrent callers never exceed the limit) and applying a manual action.
-/// They only run while half-open or when an operator acts, so their latency does not matter.
+/// entity and return its answer, for the operations that need one: handing out a probe permit
+/// (atomically, so concurrent callers never exceed the limit), applying a manual action and an
+/// operator's on-demand alert check. They only run while half-open or when an operator acts, so their
+/// latency does not matter.
 /// </summary>
 public static class CircuitOrchestrations
 {
@@ -32,5 +33,12 @@ public static class CircuitOrchestrations
         var input = context.GetInput<ManualActionOrchestrationInput>()
             ?? throw new InvalidOperationException("Missing orchestration input.");
         return context.Entities.CallEntityAsync<ManualActionResult>(CircuitEntity.IdFor(input.CircuitKey), CircuitOperations.ApplyManualAction, input.Command);
+    }
+
+    [Function(nameof(AlertCheckOrchestrator))]
+    public static Task<CircuitSnapshot?> AlertCheckOrchestrator([OrchestrationTrigger] TaskOrchestrationContext context)
+    {
+        var circuitKey = context.GetInput<string>() ?? throw new InvalidOperationException("Missing orchestration input.");
+        return context.Entities.CallEntityAsync<CircuitSnapshot?>(CircuitEntity.IdFor(circuitKey), CircuitOperations.PollAlertsNow);
     }
 }

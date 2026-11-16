@@ -1,5 +1,6 @@
 using Azure.Core;
 using Azure.Identity;
+using CircuitBreaker.Function.Alerts;
 using CircuitBreaker.Function.Http;
 using CircuitBreaker.Function.Observability;
 using CircuitBreaker.Function.Switches;
@@ -19,7 +20,9 @@ builder.Services.AddSingleton<CircuitMetrics>();
 builder.Services.AddSingleton<RequestAuthorizer>();
 builder.Services.AddSingleton<TokenCredential>(_ => new DefaultAzureCredential());
 builder.Services.AddSingleton<ICircuitSwitchProvider, CircuitSwitchProvider>();
+builder.Services.AddHttpClient<IAlertRuleClient, ResourceGraphAlertRuleClient>();
 builder.Services.Configure<SwitchOptions>(builder.Configuration.GetSection("Switches"));
+builder.Services.Configure<AlertPollingOptions>(builder.Configuration.GetSection("AlertPolling"));
 builder.Services.Configure<ApiOptions>(builder.Configuration.GetSection("Api"));
 builder.Services.Configure<SecurityOptions>(builder.Configuration.GetSection("Security"));
 

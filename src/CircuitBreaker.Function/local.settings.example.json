@@ -6,6 +6,8 @@
     "AZURE_FUNCTIONS_ENVIRONMENT": "Development",
     "TaskHubName": "circuitbreakerlocal",
     "Security__Mode": "Development",
-    "Security__DevelopmentUser": "local-developer"
+    "Security__DevelopmentUser": "local-developer",
+    "AlertPolling__Mode": "Off",
+    "AlertPolling__Interval": "00:01:00"
   }
 }

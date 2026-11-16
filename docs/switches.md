@@ -9,8 +9,8 @@ fails it, and retries it until it is dead-lettered. A **switch** stops the work 
 | Service Bus subscription | `ReceiveDisabled`: messages wait in the subscription | `Active` | queue and topic consumers |
 | App Configuration feature flag | disabled | enabled | scheduled jobs, background loops, UI features |
 
-The breaker flips the switch whenever the circuit's state changes. Only `Open` and `Isolated` open the
-switch; `Closed`, `HalfOpen` and `Disabled` close it.
+The breaker flips the switch whenever the circuit's state changes. `Open`, `OpenedByAlert`,
+`OpenedAfterAlert` and `Isolated` open the switch; `Closed`, `HalfOpen` and `Disabled` close it.
 
 ## Configure a switch
 
@@ -95,6 +95,71 @@ back the state change and lose the decision.
 
 Common causes: a missing role assignment (403), a misspelled flag or subscription (404), a store or
 namespace not configured. Fix it, and the next retry succeeds on its own.
+
+## Per-key circuits: one partner at a time
+
+Sometimes one dependency fails for a part of the traffic only: deliveries to partner 42 fail, the
+other partners are fine. One circuit for "partner delivery" would stop everyone. Give each part its
+own circuit, with the part in the key:
+
+```csharp
+foreach (var partner in partners)
+{
+    circuitBreakers.AddCircuit(new CircuitOptions
+    {
+        Definition = new CircuitDefinition
+        {
+            Key = $"partner-delivery-{partner.Id}",
+            DisplayName = $"Delivery to {partner.Name}",
+            Switch = new SwitchDefinition { Kind = SwitchKind.FeatureFlag, Store = "main", FeatureFlag = $"partner-delivery-{partner.Id}-enabled" },
+        },
+    });
+}
+```
+
+The caller picks the circuit per item, with
+`serviceProvider.GetRequiredKeyedService<ICircuitBreaker>($"partner-delivery-{message.PartnerId}")`.
+Each circuit counts, recovers and is managed on its own, and the console shows exactly which partner
+is stopped.
+Keep the number of keys bounded and known up front: every key is an entity and a row in the console,
+and a key derived from free input lets anyone create circuits.
+
+### Alternative: one parameterized feature flag
+
+When there are many parts, or they come and go, one flag per part is a lot of flags. A feature flag
+with a **contextual feature filter** can hold the list instead: the filter's parameters name the parts
+that are stopped, and the application asks per item:
+
+```csharp
+public sealed record PartnerContext(string PartnerId);
+
+if (!await featureManager.IsEnabledAsync("partner-delivery", new PartnerContext(message.PartnerId)))
+{
+    // stopped for this partner: reschedule the message, see below
+}
+```
+
+with a filter that implements `IContextualFeatureFilter<PartnerContext>`
+([Microsoft docs](https://learn.microsoft.com/azure/azure-app-configuration/feature-management-dotnet-reference#contextual-feature-filters)).
+Conventions that keep it safe:
+
+- **A part that is not in the list flows.** An empty list, or a missing flag, stops nothing.
+- **Opening adds the part** to the filter's parameters; **closing removes it** again.
+- **Only at entry points.** Check the flag where an item enters your system (an HTTP intake, the
+  first consumer), not halfway through a pipeline where stopping leaves half-done work.
+
+This playbook's feature flag switch turns a whole flag on or off; a parameterized switch is an
+extension you write yourself (add a `SwitchKind`, read the flag, change one parameter, write it back
+conditionally — the same rules as below apply). Link no [alert rules](alert-driven-opening.md) to
+parameterized or per-key circuits: an alert does not say which part is failing.
+
+### Do not use one auto-forwarding subscription per part
+
+A tempting design is one Service Bus subscription per partner, auto-forwarding to a shared queue, and
+the subscription as the switch. It fails at half-open: the moment the subscription is active again,
+**everything** that piled up is forwarded at once, and the recovering partner gets the whole backlog
+instead of a probe. Use a parameterized flag or per-key circuit at the consumer, and reschedule
+stopped messages (`ScheduledEnqueueTime`) or abandon them with a delay, so they come back gradually.
 
 ## Rules
 

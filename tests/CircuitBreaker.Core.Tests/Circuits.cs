@@ -60,4 +60,17 @@ internal static class Circuits
 
     public static ProbePermit AcquireProbe(CircuitData data, DateTimeOffset now) =>
         CircuitEngine.TryAcquireProbe(data, new ProbeRequest("test"), Guid.NewGuid(), now).Permit;
+
+    public const string Rule = "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-monitoring/providers/Microsoft.Insights/scheduledQueryRules/payments-errors";
+
+    public const string MetricRule = "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-monitoring/providers/Microsoft.Insights/metricAlerts/payments-latency";
+
+    public static AlertRuleInfo RuleInfo(bool firing, string ruleId = Rule, bool enabled = true, bool autoMitigate = true) =>
+        new(ruleId.ToLowerInvariant(), enabled, autoMitigate, firing ? [$"{ruleId}/alerts/1"] : []);
+
+    public static CircuitData WithAlertRules(params string[] ruleIds) =>
+        Registered(Definition(d => d with { AlertRuleIds = ruleIds }));
+
+    public static CircuitEffects Poll(CircuitData data, DateTimeOffset now, AlertPollingMode mode = AlertPollingMode.Active, params AlertRuleInfo[] rules) =>
+        CircuitEngine.ApplyAlertPoll(data, new AlertPollSettings(mode, TimeSpan.FromMinutes(1), Jitter: 0), AlertPollResult.Success(rules), now, scheduled: true);
 }

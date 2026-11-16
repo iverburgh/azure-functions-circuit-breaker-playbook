@@ -8,9 +8,11 @@ fold into an existing admin portal.
 
 | Where | What |
 |---|---|
-| Table | every circuit: state (colour **and** text), failures in the window against the threshold, recovery countdown while open, switch status, time of the last change |
+| Table | every circuit: state (colour **and** text; the two alert states have a double border), failures in the window against the threshold, recovery countdown while open ("until the alert resolves", "manual reset needed" for the alert states), switch status, time of the last change |
 | Filter and search | by state, and by key or display name |
 | Details | definition (threshold, window, timeouts, probe limits, counted categories), the last failure with its category, probes in flight, switch target and last error, and the history of transitions with trigger, reason and actor |
+| Health | when a circuit is not healthy: Degraded or Unhealthy, with every reason and its code |
+| Alert rules | for circuits with linked rules: polling mode and interval, last poll, which rule tripped the circuit, a "would open" note in `Shadow`, the last poll error, and each rule with its suitability (suitable, not found, stateless, unsupported, disabled) and whether it fires |
 | Header | who you are and whether you may act, auto-refresh (every 10 seconds) and a manual refresh |
 
 ## What it lets you do
@@ -26,6 +28,12 @@ rules of its own, so it can never offer something the breaker would refuse.
 | Disable | forced closed; outcomes never open it | the breaker misbehaves, or errors should pass through during maintenance |
 | Reset | back to `Closed`, clean window, no backoff | the dependency is fixed and you do not want to wait for probes |
 | Delete | removes the circuit | a circuit that no longer exists; it returns if a caller registers it again |
+
+`Reset` is not offered while an alert holds the circuit (`OpenedByAlert`): the alert decides. For
+circuits with linked alert rules, operators also get **Check alerts now**, which polls the rules at
+once instead of waiting for the next interval — the step after closing an alert in the
+[runbook](alert-driven-opening.md#runbook-a-circuit-is-opened-by-an-alert). It needs no reason: it
+reads, and only the alert result can change the state.
 
 Every action asks for a reason. It is required by the API, stored in the circuit's history with
 your name, and logged as a structured event — the audit trail for "who closed this, and why?".
@@ -81,5 +89,5 @@ returns focus to the button that opened it, and a live region for notices.
 
 [App.test.tsx](../ui/src/test/App.test.tsx) runs the console against an in-memory API with Testing
 Library: rendering per state, read-only versus operator, the reason being required, a refused
-action, keyboard focus in the dialog, filtering, and keeping an action's result while the list lags
-behind.
+action, keyboard focus in the dialog, filtering, keeping an action's result while the list lags
+behind, a circuit held by an alert (no Reset; checking alerts works), and health reasons.

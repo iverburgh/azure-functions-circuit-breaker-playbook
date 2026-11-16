@@ -45,6 +45,9 @@ public sealed class CircuitData
     /// <summary>Due time of the single pending staleness check; a check with another due time is a duplicate.</summary>
     public DateTimeOffset? NextStalenessCheckAt { get; set; }
 
+    /// <summary>The alert poll loop; null while the circuit links no alert rules.</summary>
+    public AlertPollState? Alerts { get; set; }
+
     [JsonIgnore]
     public CircuitDefinition RequiredDefinition =>
         Definition ?? throw new InvalidOperationException("The circuit has not been registered.");
@@ -94,3 +97,31 @@ public sealed class SwitchState
 }
 
 public readonly record struct WindowTotals(int Successes, int CountedFailures, int IgnoredFailures);
+
+public sealed class AlertPollState
+{
+    /// <summary>When the poll loop started; stands in for the last success until the first poll succeeds.</summary>
+    public DateTimeOffset Since { get; set; }
+
+    public AlertPollingMode Mode { get; set; }
+
+    /// <summary>The interval in force, stored so health can tell a stale poller without knowing the configuration.</summary>
+    public TimeSpan Interval { get; set; }
+
+    public bool Active { get; set; }
+
+    public bool WouldOpen { get; set; }
+
+    public List<string> TrippedBy { get; set; } = [];
+
+    public List<AlertRuleStatus> Rules { get; set; } = [];
+
+    public DateTimeOffset? LastPolledAt { get; set; }
+
+    public DateTimeOffset? LastSucceededAt { get; set; }
+
+    public string? LastError { get; set; }
+
+    /// <summary>Due time of the single pending poll; a poll signal with another due time is a duplicate.</summary>
+    public DateTimeOffset? NextPollAt { get; set; }
+}

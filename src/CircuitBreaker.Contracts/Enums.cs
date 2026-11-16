@@ -5,8 +5,14 @@ namespace CircuitBreaker.Contracts;
 /// <summary>
 /// The states of a circuit. <see cref="Closed"/>, <see cref="Open"/> and <see cref="HalfOpen"/> are
 /// driven automatically by outcomes and time; <see cref="Isolated"/> and <see cref="Disabled"/> are
-/// manual overrides that only an operator enters and leaves.
+/// manual overrides that only an operator enters and leaves; <see cref="OpenedByAlert"/> and
+/// <see cref="OpenedAfterAlert"/> are driven by Azure Monitor alert rules.
 /// </summary>
+/// <remarks>
+/// Every enum in this assembly is append-only. Values travel as strings, and a reader that does not
+/// know a value fails to read the whole message. Add new values at the end, deploy readers first, and
+/// never rename or remove a value. A test guards this.
+/// </remarks>
 [JsonConverter(typeof(JsonStringEnumConverter<CircuitState>))]
 public enum CircuitState
 {
@@ -24,6 +30,12 @@ public enum CircuitState
 
     /// <summary>Forced closed by an operator; outcomes are recorded but never open the circuit.</summary>
     Disabled,
+
+    /// <summary>Held open because a linked alert rule fires. Outcomes and timers are ignored; it cannot be reset while the alert fires.</summary>
+    OpenedByAlert,
+
+    /// <summary>The alert that opened the circuit has resolved. Stays open until a person resets it.</summary>
+    OpenedAfterAlert,
 }
 
 /// <summary>Why a call failed. Each circuit decides which categories count towards opening it.</summary>
@@ -74,4 +86,50 @@ public enum SwitchPosition
 
     /// <summary>Work is stopped.</summary>
     Open,
+}
+
+/// <summary>How the breaker acts on linked alert rules. Plain configuration, so it can be changed without a deployment of the clients.</summary>
+[JsonConverter(typeof(JsonStringEnumConverter<AlertPollingMode>))]
+public enum AlertPollingMode
+{
+    /// <summary>Alert rules are not queried. A circuit held open by an alert is handed to a person.</summary>
+    Off,
+
+    /// <summary>Alert rules are queried and the result is shown ("would open"), but no state changes.</summary>
+    Shadow,
+
+    /// <summary>A firing alert rule opens the circuit.</summary>
+    Active,
+}
+
+/// <summary>Whether a linked alert rule can drive a circuit. Ordered by precedence: the first problem found wins.</summary>
+[JsonConverter(typeof(JsonStringEnumConverter<AlertRuleSuitability>))]
+public enum AlertRuleSuitability
+{
+    /// <summary>Found, stateful and enabled.</summary>
+    Suitable,
+
+    /// <summary>Not a log search or metric alert rule; other rule types never resolve on their own.</summary>
+    UnsupportedType,
+
+    /// <summary>Not found, or the breaker may not read it: Resource Graph does not tell these apart.</summary>
+    NotFound,
+
+    /// <summary>The rule does not resolve its alerts automatically, so it would hold the circuit open forever.</summary>
+    Stateless,
+
+    /// <summary>The rule is disabled. It counts as resolved; that is a valid way to release a circuit.</summary>
+    Disabled,
+}
+
+[JsonConverter(typeof(JsonStringEnumConverter<CircuitHealthStatus>))]
+public enum CircuitHealthStatus
+{
+    Healthy,
+
+    /// <summary>Works, but something needs attention. See the reasons.</summary>
+    Degraded,
+
+    /// <summary>The breaker has decided something it cannot carry out.</summary>
+    Unhealthy,
 }

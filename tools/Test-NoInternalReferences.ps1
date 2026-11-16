@@ -38,7 +38,10 @@ $publicGuids = @(
     '0a9a7e1f-b9d0-4cc4-a60d-0319b160aaa3' # Storage Table Data Contributor
     '5ae67dd6-50cb-40e7-96ff-dc2bfa4b606b' # App Configuration Data Owner
     '090c5cfd-751d-490a-894a-3ce6f1109419' # Azure Service Bus Data Owner
+    '43d0d8ad-25c7-4714-9337-8ba259a9fe05' # Monitoring Reader
 )
+# Zero-filled GUIDs such as 00000000-0000-0000-0000-000000000001 are obvious placeholders.
+$placeholderGuid = '^0{8}-0{4}-0{4}-0{4}-0{8}[0-9a-f]{4}$'
 
 # Scan everything except binaries, dependencies and build output: an extension allow-list would skip dotfiles, where stray references hide.
 $files = @(Get-ChildItem -Path $Path -Recurse -File -Force |
@@ -84,7 +87,7 @@ $findings = @()
 foreach ($rule in $forbidden) {
     foreach ($hit in @($files | Select-String -Pattern $rule.Pattern -AllMatches -ErrorAction SilentlyContinue)) {
         $matched = @($hit.Matches | ForEach-Object { $_.Value.ToLowerInvariant() })
-        if ($rule.Name -eq 'Tenant or object ID' -and -not ($matched | Where-Object { $publicGuids -notcontains $_ })) {
+        if ($rule.Name -eq 'Tenant or object ID' -and -not ($matched | Where-Object { $publicGuids -notcontains $_ -and $_ -notmatch $placeholderGuid })) {
             continue
         }
 

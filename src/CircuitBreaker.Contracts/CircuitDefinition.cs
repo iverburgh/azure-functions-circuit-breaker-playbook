@@ -48,6 +48,16 @@ public sealed partial record CircuitDefinition
     /// <summary>Optional: something to flip when the circuit opens or closes, for work that does not pass through the client.</summary>
     public SwitchDefinition? Switch { get; init; }
 
+    /// <summary>
+    /// Optional: resource IDs of Azure Monitor alert rules (log search or metric) that hold the circuit
+    /// open while one of them fires. Measure upstream, switch downstream: the rule watches the dependency,
+    /// the circuit stops the work that depends on it.
+    /// </summary>
+    public IReadOnlyList<string> AlertRuleIds { get; init; } = [];
+
+    /// <summary>The most alert rules one circuit may link; keeps the Resource Graph query small.</summary>
+    public const int MaxAlertRules = 20;
+
     public IReadOnlyList<string> Validate()
     {
         var errors = new List<string>();
@@ -106,11 +116,30 @@ public sealed partial record CircuitDefinition
             errors.AddRange(Switch.Validate());
         }
 
+        if (AlertRuleIds.Count > MaxAlertRules)
+        {
+            errors.Add($"AlertRuleIds may contain at most {MaxAlertRules} rules.");
+        }
+
+        if (AlertRuleIds.Any(id => id is null || !AlertRuleIdPattern().IsMatch(id)))
+        {
+            errors.Add("Every AlertRuleIds entry must be an Azure resource ID: /subscriptions/{id}/resourceGroups/{group}/providers/{namespace}/{type}/{name}.");
+        }
+        else if (AlertRuleIds.Distinct(StringComparer.OrdinalIgnoreCase).Count() != AlertRuleIds.Count)
+        {
+            errors.Add("AlertRuleIds must not contain the same rule twice.");
+        }
+
         return errors;
     }
 
     [GeneratedRegex("^[a-z0-9]+(-[a-z0-9]+)*$")]
     private static partial Regex KeyPattern();
+
+    // The IDs end up in a Resource Graph query, so quotes, backslashes and control characters are refused.
+    // Azure resource IDs are case-insensitive.
+    [GeneratedRegex(@"^/subscriptions/[0-9a-f-]{36}/resourceGroups/[\w.()-]{1,90}/providers/[\w.]+/[\w.]+/[^/'""\\\p{C}]{1,260}$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex AlertRuleIdPattern();
 }
 
 /// <summary>What to flip when the circuit changes position. See <see cref="SwitchKind"/>.</summary>

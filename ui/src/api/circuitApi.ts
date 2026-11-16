@@ -4,6 +4,8 @@ export interface CircuitApi {
   me(): Promise<CallerIdentity>;
   list(): Promise<CircuitSnapshot[]>;
   act(key: string, action: CircuitAction, reason: string): Promise<ManualActionResult>;
+  /** Polls the circuit's alert rules now. Null when the check is queued but did not finish in time. */
+  checkAlerts(key: string): Promise<CircuitSnapshot | null>;
 }
 
 export class ApiError extends Error {
@@ -40,6 +42,12 @@ export class HttpCircuitApi implements CircuitApi {
       { method: "POST", body: JSON.stringify({ reason }) },
       [409],
     );
+  }
+
+  async checkAlerts(key: string): Promise<CircuitSnapshot | null> {
+    // 202 carries a problem description instead of a snapshot: the check is still running.
+    const result = await this.request<Partial<CircuitSnapshot>>(`/circuits/${encodeURIComponent(key)}/alert-checks`, { method: "POST" });
+    return typeof result.key === "string" ? (result as CircuitSnapshot) : null;
   }
 
   private async request<T>(path: string, init: RequestInit = {}, acceptedErrors: number[] = []): Promise<T> {

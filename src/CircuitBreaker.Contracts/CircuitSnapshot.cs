@@ -39,6 +39,12 @@ public sealed record CircuitSnapshot
 
     public SwitchStatus? Switch { get; init; }
 
+    /// <summary>Linked alert rules and the last poll. Null when the circuit links no alert rules.</summary>
+    public AlertStatus? Alerts { get; init; }
+
+    /// <summary>Whether the breaker can carry out what it decided for this circuit, and why not. Optional on the wire, so older breakers stay readable.</summary>
+    public CircuitHealth Health { get; init; } = CircuitHealth.Healthy;
+
     /// <summary>The manual actions the current state allows. The UI shows exactly these.</summary>
     public required IReadOnlyList<CircuitAction> AllowedActions { get; init; }
 
@@ -59,3 +65,35 @@ public sealed record SwitchStatus(
     string? LastError,
     DateTimeOffset? LastAttemptAt,
     int FailedAttempts);
+
+/// <summary>The result of polling the linked alert rules.</summary>
+/// <param name="Mode">The polling mode in force at the last poll.</param>
+/// <param name="Active">Whether at least one suitable rule fired at the last successful poll.</param>
+/// <param name="WouldOpen">In shadow mode: whether the circuit would have opened.</param>
+/// <param name="TrippedBy">The rules that opened (or would open) the circuit.</param>
+/// <param name="Interval">The poll interval, so readers can tell a stale poller.</param>
+public sealed record AlertStatus(
+    AlertPollingMode Mode,
+    bool Active,
+    bool WouldOpen,
+    IReadOnlyList<string> TrippedBy,
+    IReadOnlyList<AlertRuleStatus> Rules,
+    DateTimeOffset? LastPolledAt,
+    DateTimeOffset? LastSucceededAt,
+    string? LastError,
+    TimeSpan Interval);
+
+public sealed record AlertRuleStatus(string RuleId, AlertRuleSuitability Suitability, bool Firing);
+
+/// <summary>A machine-readable reason with a stable code, so dashboards and alerts can match on it.</summary>
+public sealed record HealthReason(int Code, string Message);
+
+public sealed record CircuitHealth(CircuitHealthStatus Status, IReadOnlyList<HealthReason> Reasons)
+{
+    public static CircuitHealth Healthy { get; } = new(CircuitHealthStatus.Healthy, []);
+}
+
+/// <summary>The health of all circuits: the worst status, and every circuit that is not healthy.</summary>
+public sealed record BreakerHealthReport(CircuitHealthStatus Status, int Circuits, IReadOnlyList<CircuitHealthEntry> Unhealthy);
+
+public sealed record CircuitHealthEntry(string Key, CircuitState State, CircuitHealth Health);

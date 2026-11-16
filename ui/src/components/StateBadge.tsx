@@ -7,6 +7,8 @@ const descriptions: Record<CircuitState, string> = {
   HalfOpen: "A few probe calls test whether the dependency has recovered.",
   Isolated: "Forced open by an operator; never recovers on its own.",
   Disabled: "Forced closed by an operator; failures never open it.",
+  OpenedByAlert: "Held open while a linked alert rule fires; closing the alert releases it.",
+  OpenedAfterAlert: "The alert has resolved; a person checks the data and resets the circuit.",
 };
 
 /** The state as text and colour — never colour alone. */

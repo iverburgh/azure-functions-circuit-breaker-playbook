@@ -13,6 +13,8 @@ public static class CircuitOperations
     public const string ProbeLeaseExpired = nameof(ProbeLeaseExpired);
     public const string ReconcileSwitch = nameof(ReconcileSwitch);
     public const string CheckStaleness = nameof(CheckStaleness);
+    public const string PollAlerts = nameof(PollAlerts);
+    public const string PollAlertsNow = nameof(PollAlertsNow);
 }
 
 public sealed record RecoveryTimer(long Generation);

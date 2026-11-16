@@ -41,6 +41,19 @@ public sealed class FailFastTests
         Assert.That(fixture.Api.ProbeRequests, Is.Zero);
     }
 
+    [TestCase(CircuitState.OpenedByAlert)]
+    [TestCase(CircuitState.OpenedAfterAlert)]
+    public void An_alert_held_circuit_refuses_without_probing(CircuitState state)
+    {
+        var fixture = new Fixture();
+        fixture.Api.SetState(state);
+
+        var refused = Assert.ThrowsAsync<BrokenCircuitException>(() => fixture.Breaker.ExecuteAsync(_ => Task.CompletedTask));
+
+        Assert.That(refused!.State, Is.EqualTo(state));
+        Assert.That(fixture.Api.ProbeRequests, Is.Zero, "Only a person or the alert closes it; probing would not help.");
+    }
+
     [Test]
     public void An_isolated_circuit_refuses_until_an_operator_resets_it()
     {

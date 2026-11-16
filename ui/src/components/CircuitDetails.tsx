@@ -1,9 +1,32 @@
-import type { CircuitSnapshot } from "../api/types";
+import type { AlertRuleSuitability, CircuitSnapshot } from "../api/types";
 import { formatRelative, formatTimeSpan, formatTimestamp, stateLabels } from "../format";
 import { StateBadge } from "./StateBadge";
 
-export function CircuitDetails({ circuit, now }: { circuit: CircuitSnapshot; now: number }) {
+interface Props {
+  circuit: CircuitSnapshot;
+  now: number;
+  canOperate?: boolean;
+  checking?: boolean;
+  onCheckAlerts?: (circuit: CircuitSnapshot) => void;
+}
+
+const suitabilityLabels: Record<AlertRuleSuitability, string> = {
+  Suitable: "suitable",
+  UnsupportedType: "ignored: not a log search or metric rule",
+  NotFound: "not found or no read access",
+  Stateless: "ignored: does not resolve automatically",
+  Disabled: "disabled (counts as resolved)",
+};
+
+/** The last segment of an Azure resource id: readable, and unique enough within one circuit. */
+function ruleName(ruleId: string): string {
+  return ruleId.split("/").filter(Boolean).pop() ?? ruleId;
+}
+
+export function CircuitDetails({ circuit, now, canOperate = false, checking = false, onCheckAlerts }: Props) {
   const definition = circuit.definition;
+  const health = circuit.health;
+  const alerts = circuit.alerts;
   return (
     <section className="details" aria-label={`Details of ${circuit.displayName}`}>
       <h2>
@@ -52,6 +75,48 @@ export function CircuitDetails({ circuit, now }: { circuit: CircuitSnapshot; now
             </>
           )}
         </div>
+      )}
+
+      {health && health.status !== "Healthy" && (
+        <div className={health.status === "Unhealthy" ? "callout callout-error" : "callout"}>
+          <strong>Health: {health.status.toLowerCase()}</strong>
+          <ul>
+            {health.reasons.map((reason) => (
+              <li key={reason.code}>
+                {reason.message} <span className="muted small">({reason.code})</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {alerts && (
+        <>
+          <h3>Alert rules</h3>
+          <p>
+            Mode <strong>{alerts.mode.toLowerCase()}</strong>, polled every {formatTimeSpan(alerts.interval)}; last poll {formatRelative(alerts.lastPolledAt, now)}, last
+            success {formatRelative(alerts.lastSucceededAt, now)}.
+            {alerts.mode === "Shadow" && alerts.wouldOpen && <strong> In active mode this circuit would be open now.</strong>}
+          </p>
+          {alerts.trippedBy.length > 0 && (
+            <div className="callout callout-error">
+              <strong>Tripped by</strong> {alerts.trippedBy.map(ruleName).join(", ")}. Fix the cause, then close the alert; the circuit then waits for a person to reset it.
+            </div>
+          )}
+          {alerts.lastError && <div className="callout callout-error">Last poll failed: {alerts.lastError}</div>}
+          <ul>
+            {alerts.rules.map((rule) => (
+              <li key={rule.ruleId} title={rule.ruleId}>
+                <code>{ruleName(rule.ruleId)}</code>: {rule.firing ? "firing" : "not firing"}, {suitabilityLabels[rule.suitability]}
+              </li>
+            ))}
+          </ul>
+          {canOperate && onCheckAlerts && (
+            <button type="button" onClick={() => onCheckAlerts(circuit)} disabled={checking} aria-busy={checking}>
+              {checking ? "Checking alerts…" : "Check alerts now"}
+            </button>
+          )}
+        </>
       )}
 
       <h3>History</h3>

@@ -1,5 +1,6 @@
 using CircuitBreaker.Contracts;
 using CircuitBreaker.Core;
+using CircuitBreaker.Function.Alerts;
 using CircuitBreaker.Function.Observability;
 using CircuitBreaker.Function.Switches;
 using Microsoft.Azure.Functions.Worker;
@@ -22,6 +23,8 @@ namespace CircuitBreaker.Function.Entities;
 public sealed class CircuitEntity(
     ICircuitSwitchProvider switches,
     IOptions<SwitchOptions> switchOptions,
+    IAlertRuleClient alertRules,
+    IOptions<AlertPollingOptions> alertOptions,
     CircuitMetrics metrics,
     TimeProvider timeProvider,
     ILogger<CircuitEntity> logger) : TaskEntity<CircuitData>
@@ -156,6 +159,72 @@ public sealed class CircuitEntity(
         return Task.CompletedTask;
     }
 
+    /// <summary>The scheduled alert poll. Only the poll with the expected due time runs; others are duplicates.</summary>
+    public async Task PollAlerts(DateTimeOffset dueAt)
+    {
+        if (!IsRegistered(CircuitOperations.PollAlerts))
+        {
+            return;
+        }
+
+        if (!CircuitEngine.IsAlertPollDue(State, dueAt))
+        {
+            logger.OperationIgnored(Key, CircuitOperations.PollAlerts, $"Alert poll due at {dueAt:O} is no longer pending.");
+            return;
+        }
+
+        await PollAlertsAsync(CircuitOperations.PollAlerts, scheduled: true);
+    }
+
+    /// <summary>An operator's "check alerts now": polls at once without starting a second loop.</summary>
+    public async Task<CircuitSnapshot?> PollAlertsNow()
+    {
+        if (!IsRegistered(CircuitOperations.PollAlertsNow))
+        {
+            return null;
+        }
+
+        await PollAlertsAsync(CircuitOperations.PollAlertsNow, scheduled: false);
+        return CircuitEngine.ToSnapshot(State, timeProvider.GetUtcNow());
+    }
+
+    private async Task PollAlertsAsync(string operation, bool scheduled)
+    {
+        var options = alertOptions.Value;
+        var settings = options.ToSettings();
+        AlertPollResult? result = null;
+        if (CircuitEngine.ShouldQueryAlerts(State, settings))
+        {
+            result = await QueryAlertsAsync(State.RequiredDefinition.AlertRuleIds, options.QueryTimeout);
+        }
+
+        var now = timeProvider.GetUtcNow();
+        Carry(operation, CircuitEngine.ApplyAlertPoll(State, settings, result, now, scheduled));
+        await SyncSwitchAsync(now);
+    }
+
+    private async Task<AlertPollResult> QueryAlertsAsync(IReadOnlyList<string> ruleIds, TimeSpan timeout)
+    {
+        try
+        {
+            using var cancellation = new CancellationTokenSource(timeout);
+            var rules = await alertRules.GetRulesAsync(ruleIds, cancellation.Token);
+            metrics.RecordAlertPoll(Key, "success");
+            return AlertPollResult.Success(rules);
+        }
+        catch (Exception exception)
+        {
+            // Never throw: a failed poll changes no state, and throwing would lose the reschedule.
+            var kind = exception is AlertQueryException query ? query.Kind.ToString()
+                : exception is OperationCanceledException ? nameof(AlertQueryFailure.Timeout)
+                : "Unexpected";
+            metrics.RecordAlertPoll(Key, kind);
+            logger.AlertPollFailed(exception, Key, kind);
+            var message = $"{kind}: {exception.Message}";
+            return AlertPollResult.Failure(message.Length <= MaxSwitchErrorLength ? message : message[..MaxSwitchErrorLength]);
+        }
+    }
+
     private bool IsRegistered(string operation)
     {
         if (State?.Definition is not null)
@@ -174,7 +243,7 @@ public sealed class CircuitEntity(
         foreach (var transition in effects.Transitions)
         {
             metrics.RecordTransition(Key, transition);
-            if (transition.To is CircuitState.Open or CircuitState.Isolated)
+            if (CircuitTransitions.SwitchPositionFor(transition.To) == SwitchPosition.Open)
             {
                 logger.CircuitStopped(Key, transition.From, transition.To, transition.Trigger, State.Generation, transition.Reason, transition.Actor);
             }

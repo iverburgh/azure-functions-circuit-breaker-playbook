@@ -49,7 +49,7 @@ This playbook covers those cases. Combine it with a local breaker where both app
 
 | Topic | Read | See it in code |
 |---|---|---|
-| Explicit state machine: `Closed`, `Open`, `HalfOpen` and two manual overrides | [state-machine.md](docs/state-machine.md) | [CircuitTransitions.cs](src/CircuitBreaker.Core/CircuitTransitions.cs) |
+| Explicit state machine: `Closed`, `Open`, `HalfOpen`, two alert states and two manual overrides | [state-machine.md](docs/state-machine.md) | [CircuitTransitions.cs](src/CircuitBreaker.Core/CircuitTransitions.cs) |
 | How many failures in which time window open the circuit | [failure-threshold.md](docs/failure-threshold.md) | [FailureWindow.cs](src/CircuitBreaker.Core/FailureWindow.cs) |
 | State, counters and timestamps in a Durable Entity | [durable-state.md](docs/durable-state.md) | [CircuitEntity.cs](src/CircuitBreaker.Function/Entities/CircuitEntity.cs) |
 | Atomic transitions, no race conditions | [concurrency.md](docs/concurrency.md) | [ReplayAndConcurrencyTests.cs](tests/CircuitBreaker.Function.Tests/ReplayAndConcurrencyTests.cs) |
@@ -58,8 +58,9 @@ This playbook covers those cases. Combine it with a local breaker where both app
 | Which failures count: timeouts, exceptions, functional errors | [failure-classification.md](docs/failure-classification.md) | [Classification.cs](src/CircuitBreaker.Client/Classification.cs) |
 | Refusing at once, without touching the dependency | [fail-fast.md](docs/fail-fast.md) | [CircuitBreakerGate.cs](src/CircuitBreaker.Client/CircuitBreakerGate.cs) |
 | Timeouts and retries that work with the breaker | [timeouts-and-retries.md](docs/timeouts-and-retries.md) | [ReportingTests.cs](tests/CircuitBreaker.Client.Tests/ReportingTests.cs) |
-| Logging, metrics, and testing recovery, crashes, concurrency and replay | [observability-and-testing.md](docs/observability-and-testing.md) | [EntityHarness.cs](tests/CircuitBreaker.Function.Tests/EntityHarness.cs) |
-| Stopping queue consumers and scheduled jobs | [switches.md](docs/switches.md) | [CircuitSwitches.cs](src/CircuitBreaker.Function/Switches/CircuitSwitches.cs) |
+| Logging, metrics, health, and testing recovery, crashes, concurrency and replay | [observability-and-testing.md](docs/observability-and-testing.md) | [EntityHarness.cs](tests/CircuitBreaker.Function.Tests/EntityHarness.cs) |
+| Stopping queue consumers and scheduled jobs, also per partner | [switches.md](docs/switches.md) | [CircuitSwitches.cs](src/CircuitBreaker.Function/Switches/CircuitSwitches.cs) |
+| Letting Azure Monitor alert rules hold a circuit open | [alert-driven-opening.md](docs/alert-driven-opening.md) | [Alerts.cs](src/CircuitBreaker.Core/Alerts.cs) |
 | Watching and overruling circuits | [management-ui.md](docs/management-ui.md) | [ui/](ui) |
 
 Then: [apply it to your own solution](docs/applying-to-your-solution.md), deploy it with
@@ -84,15 +85,33 @@ the Function and the console together — follow [getting started](docs/getting-
 src/
   CircuitBreaker.Contracts/   What the Function, the client and the UI exchange
   CircuitBreaker.Core/        The rules: state machine, failure window, backoff, probes. Pure, no Azure
-  CircuitBreaker.Function/    Durable Entity per circuit, HTTP API, switches, authorization, metrics
-  CircuitBreaker.Client/      For callers: the gate, outcome reporting, registration, HttpClient handler
+  CircuitBreaker.Function/    Durable Entity per circuit, HTTP API, switches, alert polling, authorization, metrics
+  CircuitBreaker.Client/      For callers: the gate, outcome reporting, registration, HttpClient handler, health check
 ui/                           Management console (React, TypeScript, Vite)
-infra/                        Bicep: Flex Consumption, identity-based storage, Entra ID authentication
+infra/                        Bicep: Flex Consumption, identity-based storage, Entra ID authentication, role modules
 tests/
   CircuitBreaker.Core.Tests/      Every rule, including a 5,000-step random walk through the state machine
-  CircuitBreaker.Function.Tests/  The entity under a simulated runtime: crashes, duplicate timers, concurrency
-  CircuitBreaker.Client.Tests/    Fail-fast, classification, batching, retries outside the breaker
+  CircuitBreaker.Function.Tests/  The entity under a simulated runtime: crashes, duplicate timers, concurrency, alert polls
+  CircuitBreaker.Client.Tests/    Fail-fast, classification, batching, retries outside the breaker, health check
 ```
+
+## Related playbooks
+
+From the same monorepo, each on its own:
+
+- [Azure App Configuration](https://github.com/iverburgh/azure-app-configuration-playbook) —
+  configuration as code, including feature flags like the ones the breaker uses as switches.
+- [Domain-Driven Design in .NET](https://github.com/iverburgh/ddd-dotnet-playbook) — bounded
+  contexts, domain events and the outbox: the integration that circuits and switches protect.
+- [Entra ID app registrations as code](https://github.com/iverburgh/entra-app-registrations-as-code-playbook) —
+  app registrations, roles and access as code, such as the breaker's Reporter, Reader and Operator
+  roles.
+- [Copilot on Azure DevOps](https://github.com/iverburgh/copilot-azure-devops-playbook) —
+  instructions, skills and agents for a repository like this one.
+- [Path filters on Azure DevOps](https://github.com/iverburgh/azure-devops-path-filter-playbook) —
+  build and deploy only what a change touches.
+- [Renovate on Azure DevOps](https://github.com/iverburgh/renovate-azure-devops-playbook) —
+  automated dependency updates.
 
 ## License
 

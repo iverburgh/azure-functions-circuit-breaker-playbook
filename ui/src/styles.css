@@ -209,6 +209,20 @@ meter {
   border-style: dashed;
 }
 
+.badge-openedbyalert {
+  background: var(--bad-bg);
+  color: var(--bad-fg);
+  border-style: double;
+  border-width: 3px;
+}
+
+.badge-openedafteralert {
+  background: var(--warn-bg);
+  color: var(--bad-fg);
+  border-style: double;
+  border-width: 3px;
+}
+
 .muted {
   color: var(--muted);
 }

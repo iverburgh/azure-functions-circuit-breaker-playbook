@@ -72,6 +72,9 @@ circuitBreakers.AddCircuit(new CircuitOptions
 The definition lives in the caller's code and is registered on start-up. When several services use
 the same circuit, give them the same definition — the last registration wins.
 
+**When a dependency fails per partner, tenant or region**, one circuit per part is better than one
+for all: see [per-key circuits](switches.md#per-key-circuits-one-partner-at-a-time).
+
 ## 4. Guard HTTP calls
 
 ```csharp
@@ -137,13 +140,21 @@ consumer reads. Report the outcome of each message or run with `ExecuteAsync`, s
 the failures. While half-open, the switch lets work through; see
 [half-open-probes.md](half-open-probes.md#switch-driven-work-while-half-open).
 
-## 8. Watch it
+## 8. Optionally: let alert rules open the circuit
 
-Add the alerts from [observability-and-testing.md](observability-and-testing.md#alerts-worth-having)
-and give operators the Reader or Operator role in the [console](management-ui.md). Introduce each new
-circuit as a dry run first: [operations.md](operations.md#introducing-a-new-circuit-safely).
+If you already have Azure Monitor alerts for failures that outcomes do not show — wrong data, a
+rejecting receiver — link them in the definition (`AlertRuleIds`), give the breaker Monitoring Reader,
+and roll out `Off` → `Shadow` → `Active`. See [alert-driven-opening.md](alert-driven-opening.md).
 
-## 9. Test it
+## 9. Watch it
+
+Add the alerts from [observability-and-testing.md](observability-and-testing.md#alerts-worth-having),
+add `AddHealthChecks().AddCircuitBreaker()` to your readiness checks
+([health](observability-and-testing.md#health)), and give operators the Reader or Operator role in the
+[console](management-ui.md). Introduce each new circuit as a dry run first:
+[operations.md](operations.md#introducing-a-new-circuit-safely).
+
+## 10. Test it
 
 - **Your refusal handling**: replace `ICircuitBreaker` with a fake that throws
   `BrokenCircuitException`, and check what your users get.
@@ -154,11 +165,13 @@ circuit as a dry run first: [operations.md](operations.md#introducing-a-new-circ
 
 ## Checklist
 
-- [ ] One circuit per dependency, with a stable key.
+- [ ] One circuit per dependency, with a stable key; one per part when parts fail independently.
 - [ ] Functional errors are classified as functional, so they never open the circuit.
 - [ ] Retries run outside the circuit and do not retry `BrokenCircuitException`.
 - [ ] `AttemptTimeout` < `ProbeTimeout`, and the total timeout leaves room for the retries.
 - [ ] Every refusal has a deliberate answer for the user.
 - [ ] Queue consumers and scheduled jobs stop through a switch.
 - [ ] Alerts on circuits opening, staying isolated, and switches failing.
+- [ ] Health check in readiness, never in liveness.
+- [ ] Linked alert rules are stateful and readable by the breaker (if you use them).
 - [ ] Each new circuit started as a dry run.

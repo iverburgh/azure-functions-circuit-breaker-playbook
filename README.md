@@ -112,6 +112,11 @@ From the same monorepo, each on its own:
   build and deploy only what a change touches.
 - [Renovate on Azure DevOps](https://github.com/iverburgh/renovate-azure-devops-playbook) —
   automated dependency updates.
+- [HTTP resilience in .NET](https://github.com/iverburgh/dotnet-http-resilience-playbook) —
+  retries, timeouts and outbound throttling for `HttpClient`: the layer below the breaker.
+- [OpenTelemetry observability in .NET](https://github.com/iverburgh/dotnet-opentelemetry-observability-playbook) —
+  traces, metrics and logs across function apps and Service Bus triggers, and alerts on the failures
+  that open a circuit.
 
 ## License
 
